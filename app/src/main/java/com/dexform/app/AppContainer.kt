@@ -6,6 +6,7 @@ import com.dexform.app.data.db.AppDatabase
 import com.dexform.app.data.db.HistoryDao
 import com.dexform.app.data.db.QuickLinkDao
 import com.dexform.app.data.db.SiteRuleDao
+import com.dexform.app.data.db.UserProfileDao
 import com.dexform.app.data.media.MediaRepository
 
 class AppContainer(val context: Context) {
@@ -31,5 +32,9 @@ class AppContainer(val context: Context) {
 
     val historyDao: HistoryDao by lazy {
         database.historyDao()
+    }
+
+    val userProfileDao: UserProfileDao by lazy {
+        database.userProfileDao()
     }
 }

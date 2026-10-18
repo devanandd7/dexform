@@ -37,6 +37,8 @@ import com.dexform.app.ui.browser.BrowserScreen
 import com.dexform.app.ui.gallery.AlbumDetailScreen
 import com.dexform.app.ui.gallery.AlbumsScreen
 import com.dexform.app.ui.gallery.PhotosScreen
+import com.dexform.app.ui.profile.AiChatScreen
+import com.dexform.app.ui.profile.ProfileScreen
 import com.dexform.app.ui.settings.SettingsScreen
 import com.dexform.app.ui.theme.DexFormTheme
 import com.dexform.app.ui.tools.ToolsScreen
@@ -164,10 +166,23 @@ fun DexFormApp() {
                 )
             }
             composable(BottomNavItem.Browser.route) {
-                BrowserScreen()
+                BrowserScreen(
+                    onNavigateToProfile = { navController.navigate("profile") }
+                )
             }
             composable("settings") {
                 SettingsScreen(
+                    onBack = { navController.popBackStack() }
+                )
+            }
+            composable("profile") {
+                ProfileScreen(
+                    onBack = { navController.popBackStack() },
+                    onOpenAiChat = { navController.navigate("ai_chat") }
+                )
+            }
+            composable("ai_chat") {
+                AiChatScreen(
                     onBack = { navController.popBackStack() }
                 )
             }

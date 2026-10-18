@@ -34,11 +34,13 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.ArrowForward
 import androidx.compose.material.icons.outlined.Cancel
@@ -48,6 +50,7 @@ import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Share
@@ -74,20 +77,23 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.dexform.app.App
 import com.dexform.app.R
 import com.dexform.app.data.db.HistoryEntity
@@ -96,7 +102,9 @@ import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun BrowserScreen() {
+fun BrowserScreen(
+    onNavigateToProfile: () -> Unit = {}
+) {
     val context = LocalContext.current
     val app = context.applicationContext as App
     val scope = rememberCoroutineScope()
@@ -105,6 +113,8 @@ fun BrowserScreen() {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val quickLinks by app.container.quickLinkDao.getAll().collectAsState(initial = emptyList())
     val historyList by app.container.historyDao.getAllHistory().collectAsState(initial = emptyList())
+    val profilesList by app.container.userProfileDao.getAllProfiles().collectAsState(initial = emptyList())
+    val activeProfile = profilesList.firstOrNull { it.isSelected } ?: profilesList.firstOrNull()
 
     var webViewInstance by remember { mutableStateOf<WebView?>(null) }
     var currentUrl by remember { mutableStateOf("https://duckduckgo.com") }
@@ -220,7 +230,6 @@ fun BrowserScreen() {
                                     }
                                 )
 
-                                // Clear URL Cross Icon ("x")
                                 if (inputUrl.isNotEmpty()) {
                                     IconButton(
                                         onClick = { inputUrl = "" },
@@ -254,6 +263,27 @@ fun BrowserScreen() {
                             }
                         }
 
+                        Spacer(modifier = Modifier.width(6.dp))
+
+                        // User Profile Avatar Action Button
+                        IconButton(onClick = onNavigateToProfile) {
+                            if (activeProfile?.imageUri != null) {
+                                AsyncImage(
+                                    model = ImageRequest.Builder(context).data(activeProfile.imageUri).crossfade(true).build(),
+                                    contentDescription = "User Profile",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.size(32.dp).clip(CircleShape)
+                                )
+                            } else {
+                                Icon(
+                                    Icons.Outlined.AccountCircle,
+                                    contentDescription = "User Profile",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(32.dp)
+                                )
+                            }
+                        }
+
                         IconButton(onClick = { showMenu = !showMenu }) {
                             Icon(Icons.Outlined.MoreVert, contentDescription = "Menu")
                         }
@@ -264,52 +294,22 @@ fun BrowserScreen() {
                         ) {
                             DropdownMenuItem(
                                 leadingIcon = {
+                                    Icon(Icons.Outlined.Person, contentDescription = null)
+                                },
+                                text = { Text(activeProfile?.let { "Profile: ${it.name}" } ?: "Create / Switch Profile") },
+                                onClick = {
+                                    showMenu = false
+                                    onNavigateToProfile()
+                                }
+                            )
+                            DropdownMenuItem(
+                                leadingIcon = {
                                     Icon(Icons.Outlined.History, contentDescription = null)
                                 },
                                 text = { Text("Browsing History") },
                                 onClick = {
                                     showMenu = false
                                     showHistoryOverlay = true
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Open Test Page") },
-                                onClick = {
-                                    showMenu = false
-                                    val testHtml = """
-                                        <!DOCTYPE html>
-                                        <html>
-                                        <head><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>DexForm Test Page</title></head>
-                                        <body style="font-family:sans-serif; padding:16px;">
-                                        <h2>DexForm Browser Test Page</h2>
-                                        <h3>1. Plain accept</h3>
-                                        <input type="file" accept="image/jpeg">
-                                        <h3>2. Label hint</h3>
-                                        <label for="p">Upload Photo (max 20 KB, JPG)</label><br>
-                                        <input id="p" type="file">
-                                        <h3>3. Hidden input + styled button</h3>
-                                        <div>Signature: 10 KB to 20 KB, 140 x 60 pixels<br>
-                                          <button onclick="document.getElementById('s').click()" style="padding:10px 16px; background:#2563EB; color:white; border:none; border-radius:6px; margin-top:6px;">Choose Signature</button>
-                                          <input id="s" type="file" style="display:none"></div>
-                                        <h3>4. PDF only, multiple</h3>
-                                        <div>Documents (PDF, not more than 200 KB)</div>
-                                        <input type="file" accept="application/pdf" multiple>
-                                        </body>
-                                        </html>
-                                    """.trimIndent()
-                                    showQuickLinksHome = false
-                                    webViewInstance?.loadDataWithBaseURL("https://test.dexform.local/", testHtml, "text/html", "utf-8", null)
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Share Link") },
-                                onClick = {
-                                    showMenu = false
-                                    val intent = Intent(Intent.ACTION_SEND).apply {
-                                        type = "text/plain"
-                                        putExtra(Intent.EXTRA_TEXT, currentUrl)
-                                    }
-                                    context.startActivity(Intent.createChooser(intent, "Share Link"))
                                 }
                             )
                             DropdownMenuItem(
@@ -427,7 +427,7 @@ fun BrowserScreen() {
                                 handler: SslErrorHandler,
                                 error: android.net.http.SslError
                             ) {
-                                handler.cancel() // Never proceed on SSL error
+                                handler.cancel()
                                 Toast.makeText(ctx, "SSL Connection Blocked for Security", Toast.LENGTH_SHORT).show()
                             }
                         }

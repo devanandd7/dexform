@@ -5,6 +5,7 @@ import androidx.room.Delete
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Update
 import androidx.room.Upsert
 import kotlinx.coroutines.flow.Flow
 
@@ -39,4 +40,28 @@ interface HistoryDao {
 
     @Query("DELETE FROM browsing_history")
     suspend fun clearHistory()
+}
+
+@Dao
+interface UserProfileDao {
+    @Query("SELECT * FROM user_profiles ORDER BY id DESC")
+    fun getAllProfiles(): Flow<List<UserProfileEntity>>
+
+    @Query("SELECT * FROM user_profiles WHERE isSelected = 1 LIMIT 1")
+    suspend fun getSelectedProfile(): UserProfileEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertProfile(profile: UserProfileEntity): Long
+
+    @Update
+    suspend fun updateProfile(profile: UserProfileEntity)
+
+    @Delete
+    suspend fun deleteProfile(profile: UserProfileEntity)
+
+    @Query("UPDATE user_profiles SET isSelected = 0")
+    suspend fun clearSelections()
+
+    @Query("UPDATE user_profiles SET isSelected = 1 WHERE id = :id")
+    suspend fun setSelectedProfile(id: Long)
 }
