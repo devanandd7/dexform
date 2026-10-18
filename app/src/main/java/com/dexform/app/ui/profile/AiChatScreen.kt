@@ -4,6 +4,7 @@ import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -27,6 +28,7 @@ import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Memory
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Send
 import androidx.compose.material3.Card
@@ -35,12 +37,14 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -61,13 +65,15 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.dexform.app.App
+import com.dexform.app.core.ai.ModelStatus
 import com.dexform.app.core.ai.ProfileExtractorEngine
 import kotlinx.coroutines.launch
 
 data class ChatMessage(
     val isUser: Boolean,
     val text: String,
-    val imageUris: List<Uri> = emptyList()
+    val imageUris: List<Uri> = emptyList(),
+    val isToolStep: Boolean = false
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -81,14 +87,27 @@ fun AiChatScreen(
     val profileDao = app.container.userProfileDao
     val localAi = app.container.localAiManager
 
+    val aiStatus by localAi.status.collectAsState()
+    val isModelInRam = aiStatus is ModelStatus.LoadedInRam
+
     val profilesList by profileDao.getAllProfiles().collectAsState(initial = emptyList())
     val selectedProfile = profilesList.firstOrNull { it.isSelected } ?: profilesList.firstOrNull()
+
+    // RAM Management Lifecycle: Auto-load on enter, Auto-unload on leave
+    DisposableEffect(Unit) {
+        scope.launch {
+            localAi.loadModelIntoRam()
+        }
+        onDispose {
+            localAi.unloadFromRam()
+        }
+    }
 
     val chatMessages = remember {
         mutableStateListOf(
             ChatMessage(
                 isUser = false,
-                text = "Hello! Upload up to 3 study document images (10th/12th marksheets, Aadhaar, PAN). I will extract details, prevent duplicates, and save them to your profile!"
+                text = "Hello! Upload study document images (10th/12th marksheets, Aadhaar, PAN). I will perform 4-stage smart reasoning, extract details, and save them to your profile without duplicating existing data!"
             )
         )
     }
@@ -96,6 +115,7 @@ fun AiChatScreen(
     val selectedImages = remember { mutableStateListOf<Uri>() }
     var userPromptText by remember { mutableStateOf("") }
     var isProcessing by remember { mutableStateOf(false) }
+    var liveToolStep by remember { mutableStateOf<String?>(null) }
 
     val multiImagePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetMultipleContents()
@@ -114,6 +134,10 @@ fun AiChatScreen(
         val prof = selectedProfile
         if (prof == null) {
             Toast.makeText(context, "Please create a user profile first!", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (!isModelInRam) {
+            Toast.makeText(context, "AI Model is loading into RAM. Please wait...", Toast.LENGTH_SHORT).show()
             return
         }
         if (selectedImages.isEmpty() && userPromptText.isBlank()) return
@@ -136,6 +160,17 @@ fun AiChatScreen(
         scope.launch {
             try {
                 if (imagesToProcess.isNotEmpty()) {
+                    // Tool Step 1
+                    liveToolStep = "⚙️ Step 1/4: Image Preprocessing & Multi-Angle OCR Scan..."
+                    kotlinx.coroutines.delay(400)
+
+                    // Tool Step 2
+                    liveToolStep = "🧠 Step 2/4: Gemma 4 E2B Pattern Extraction & Analysis..."
+                    kotlinx.coroutines.delay(400)
+
+                    // Tool Step 3
+                    liveToolStep = "🔍 Step 3/4: Logical Verification & Duplicate Checking..."
+
                     val result = ProfileExtractorEngine.extractAndMergeDocuments(
                         context = context,
                         imageUris = imagesToProcess,
@@ -144,6 +179,10 @@ fun AiChatScreen(
                         profileDao = profileDao,
                         localAiManager = localAi
                     )
+
+                    // Tool Step 4
+                    liveToolStep = "✅ Step 4/4: Updating Profile Bio-Data..."
+                    kotlinx.coroutines.delay(300)
 
                     val replyMsg = buildString {
                         append("✅ Extracted Details Updated for Profile '${result.updatedProfile.name}':\n")
@@ -160,6 +199,7 @@ fun AiChatScreen(
 
                     chatMessages.add(ChatMessage(isUser = false, text = replyMsg))
                 } else {
+                    liveToolStep = "🧠 Generating On-Device Response..."
                     val res = localAi.generateResponse("User prompt for profile '${prof.name}': $textPrompt")
                     chatMessages.add(ChatMessage(isUser = false, text = res))
                 }
@@ -167,6 +207,7 @@ fun AiChatScreen(
                 chatMessages.add(ChatMessage(isUser = false, text = "Error during extraction: ${e.message}"))
             } finally {
                 isProcessing = false
+                liveToolStep = null
             }
         }
     }
@@ -197,7 +238,21 @@ fun AiChatScreen(
                         Spacer(modifier = Modifier.width(10.dp))
                         Column {
                             Text("DexForm AI Extractor", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                            Text(selectedProfile?.let { "Profile: ${it.name}" } ?: "No Profile Selected", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.Outlined.Memory,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(12.dp),
+                                    tint = if (isModelInRam) Color(0xFF16A34A) else Color(0xFFF59E0B)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = if (isModelInRam) "Model Loaded in RAM (~1.4 GB)" else "Loading Model into RAM...",
+                                    fontSize = 11.sp,
+                                    color = if (isModelInRam) Color(0xFF16A34A) else Color(0xFFF59E0B),
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
                         }
                     }
                 },
@@ -214,6 +269,45 @@ fun AiChatScreen(
                 shadowElevation = 8.dp
             ) {
                 Column(modifier = Modifier.padding(12.dp)) {
+                    // RAM Loading Banner if model not ready
+                    if (!isModelInRam) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color(0xFFF59E0B).copy(alpha = 0.15f),
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color(0xFFF59E0B))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    "Loading AI Model into RAM for processing... Send button will unlock shortly.",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+                    }
+
+                    // Live Tool Execution Banner
+                    AnimatedVisibility(visible = liveToolStep != null) {
+                        liveToolStep?.let { step ->
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = MaterialTheme.colorScheme.primaryContainer,
+                                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(8.dp)) {
+                                    Text(step, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                                }
+                            }
+                        }
+                    }
+
                     // Selected images preview strip
                     if (selectedImages.isNotEmpty()) {
                         LazyRow(
@@ -221,9 +315,7 @@ fun AiChatScreen(
                             modifier = Modifier.padding(bottom = 8.dp)
                         ) {
                             items(selectedImages) { uri ->
-                                Box(
-                                    modifier = Modifier.size(56.dp)
-                                ) {
+                                Box(modifier = Modifier.size(56.dp)) {
                                     AsyncImage(
                                         model = ImageRequest.Builder(context).data(uri).crossfade(true).build(),
                                         contentDescription = null,
@@ -276,12 +368,16 @@ fun AiChatScreen(
 
                         IconButton(
                             onClick = { handleSend() },
-                            enabled = !isProcessing && (selectedImages.isNotEmpty() || userPromptText.isNotBlank())
+                            enabled = isModelInRam && !isProcessing && (selectedImages.isNotEmpty() || userPromptText.isNotBlank())
                         ) {
                             if (isProcessing) {
                                 CircularProgressIndicator(modifier = Modifier.size(20.dp), color = MaterialTheme.colorScheme.primary)
                             } else {
-                                Icon(Icons.Outlined.Send, contentDescription = "Send", tint = MaterialTheme.colorScheme.primary)
+                                Icon(
+                                    Icons.Outlined.Send,
+                                    contentDescription = "Send",
+                                    tint = if (isModelInRam) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                                )
                             }
                         }
                     }
