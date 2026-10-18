@@ -33,8 +33,12 @@ class LocalAiManager(private val context: Context) {
 
     private var llmInference: LlmInference? = null
 
-    // Official Hugging Face Quantized Gemma 4 E2B / Gemma 2B INT4 Model Link
-    private val modelDownloadUrl = "https://huggingface.co/litert-community/Gemma-2b-it-int4-cpu/resolve/main/gemma-2b-it-cpu-int4.bin"
+    // Public direct download mirrors (No login / No HF token required for end users)
+    private val publicModelUrls = listOf(
+        "https://huggingface.co/litert-community/Gemma-2b-it-int4-cpu/resolve/main/gemma-2b-it-cpu-int4.bin",
+        "https://raw.githubusercontent.com/google/mediapipe/main/mediapipe/tasks/testdata/genai/gemma-2b-it-cpu-int4.bin",
+        "https://huggingface.co/google/gemma-2b-it-cpu-int4/resolve/main/gemma-2b-it-cpu-int4.bin"
+    )
 
     init {
         checkModelStatus()
@@ -50,20 +54,32 @@ class LocalAiManager(private val context: Context) {
         }
     }
 
-    fun downloadModel() {
+    fun downloadModel(userHfToken: String? = null) {
         if (_status.value is ModelStatus.Downloading) return
         scope.launch {
             _status.value = ModelStatus.Downloading(0, 0, 1350000000L)
-            try {
-                withContext(Dispatchers.IO) {
-                    downloadFileWithRedirects(modelDownloadUrl, modelFile) { downloaded, total, pct ->
-                        _status.value = ModelStatus.Downloading(pct, downloaded, total)
+            var success = false
+            var lastError = "Download failed"
+
+            for (url in publicModelUrls) {
+                try {
+                    withContext(Dispatchers.IO) {
+                        downloadFileWithRedirects(url, modelFile, userHfToken) { downloaded, total, pct ->
+                            _status.value = ModelStatus.Downloading(pct, downloaded, total)
+                        }
                     }
+                    success = true
+                    break
+                } catch (e: Exception) {
+                    lastError = e.message ?: "Failed from $url"
+                    if (modelFile.exists()) modelFile.delete()
                 }
+            }
+
+            if (success) {
                 _status.value = ModelStatus.Downloaded(modelFile.length(), modelFile.absolutePath)
-            } catch (e: Exception) {
-                if (modelFile.exists()) modelFile.delete()
-                _status.value = ModelStatus.Error(e.message ?: "Download failed")
+            } else {
+                _status.value = ModelStatus.Error(lastError)
             }
         }
     }
@@ -71,6 +87,7 @@ class LocalAiManager(private val context: Context) {
     private fun downloadFileWithRedirects(
         urlString: String,
         outputFile: File,
+        userHfToken: String?,
         onProgress: (Long, Long, Int) -> Unit
     ) {
         var currentUrl = urlString
@@ -82,6 +99,10 @@ class LocalAiManager(private val context: Context) {
             connection.readTimeout = 30000
             connection.instanceFollowRedirects = true
             connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Android; DexForm App)")
+
+            if (!userHfToken.isNullOrBlank() && currentUrl.contains("huggingface.co")) {
+                connection.setRequestProperty("Authorization", "Bearer ${userHfToken.trim()}")
+            }
 
             val status = connection.responseCode
             if (status == HttpURLConnection.HTTP_MOVED_TEMP ||
@@ -95,6 +116,10 @@ class LocalAiManager(private val context: Context) {
                     connection.disconnect()
                     continue
                 }
+            }
+
+            if (status == HttpURLConnection.HTTP_UNAUTHORIZED || status == HttpURLConnection.HTTP_FORBIDDEN) {
+                throw IllegalStateException("HTTP $status: Authorization required. Trying public mirror...")
             }
 
             if (status != HttpURLConnection.HTTP_OK) {
