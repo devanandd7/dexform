@@ -36,6 +36,7 @@ import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.PictureAsPdf
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.SaveAlt
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material.icons.outlined.Transform
@@ -49,11 +50,14 @@ import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -108,7 +112,9 @@ data class ToolPreset(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ToolsScreen() {
+fun ToolsScreen(
+    onNavigateToSettings: () -> Unit = {}
+) {
     val context = LocalContext.current
     val app = context.applicationContext as App
     val scope = rememberCoroutineScope()
@@ -164,452 +170,466 @@ fun ToolsScreen() {
         )
     }
 
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        // Hero Card
-        item {
-            ElevatedCard(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.elevatedCardColors(
-                    containerColor = Color(0xFFF59E0B),
-                    contentColor = Color.White
-                )
-            ) {
-                Row(
-                    modifier = Modifier.padding(20.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Outlined.Star, contentDescription = null, tint = Color.White)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = stringResource(R.string.hero_title),
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = stringResource(R.string.hero_subtitle),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = Color.White.copy(alpha = 0.9f)
-                        )
-                    }
-                    Button(
-                        onClick = {
-                            selectedToolId = "compress"
-                            maxKbInput = "20"
-                            selectedUri = null
-                            resultFile = null
-                        },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color.White,
-                            contentColor = Color(0xFF0F172A)
-                        ),
-                        shape = RoundedCornerShape(24.dp)
-                    ) {
-                        Text(stringResource(R.string.start))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Icon(Icons.Outlined.ArrowForward, contentDescription = null)
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(stringResource(R.string.tools_title), fontWeight = FontWeight.Bold) },
+                actions = {
+                    IconButton(onClick = onNavigateToSettings) {
+                        Icon(Icons.Outlined.Settings, contentDescription = "Settings")
                     }
                 }
-            }
+            )
         }
-
-        // Quick Presets Row
-        item {
-            Column {
-                Text(
-                    text = stringResource(R.string.presets_title),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(presets) { preset ->
-                        FilterChip(
-                            selected = false,
+    ) { innerPadding ->
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            // Hero Card
+            item {
+                ElevatedCard(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.elevatedCardColors(
+                        containerColor = Color(0xFFF59E0B),
+                        contentColor = Color.White
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier.padding(20.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Outlined.Star, contentDescription = null, tint = Color.White)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = stringResource(R.string.hero_title),
+                                    style = MaterialTheme.typography.titleLarge,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = stringResource(R.string.hero_subtitle),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Color.White.copy(alpha = 0.9f)
+                            )
+                        }
+                        Button(
                             onClick = {
-                                selectedToolId = if (preset.fmt == Fmt.PDF) "shrink_pdf" else "compress"
-                                maxKbInput = preset.maxKb?.toString() ?: ""
-                                minKbInput = preset.minKb?.toString() ?: ""
-                                selectedFmt = preset.fmt
+                                selectedToolId = "compress"
+                                maxKbInput = "20"
                                 selectedUri = null
                                 resultFile = null
                             },
-                            label = { Text(stringResource(preset.labelRes)) }
-                        )
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color.White,
+                                contentColor = Color(0xFF0F172A)
+                            ),
+                            shape = RoundedCornerShape(24.dp)
+                        ) {
+                            Text(stringResource(R.string.start))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Icon(Icons.Outlined.ArrowForward, contentDescription = null)
+                        }
                     }
                 }
             }
-        }
 
-        // Selected Tool Execution Area
-        if (selectedToolId != null) {
+            // Quick Presets Row
             item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        val currentTool = toolsList.firstOrNull { it.id == selectedToolId }
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            currentTool?.icon?.let { Icon(it, contentDescription = null, tint = MaterialTheme.colorScheme.primary) }
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = currentTool?.let { stringResource(it.titleRes) } ?: "",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold
+                Column {
+                    Text(
+                        text = stringResource(R.string.presets_title),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(presets) { preset ->
+                            FilterChip(
+                                selected = false,
+                                onClick = {
+                                    selectedToolId = if (preset.fmt == Fmt.PDF) "shrink_pdf" else "compress"
+                                    maxKbInput = preset.maxKb?.toString() ?: ""
+                                    minKbInput = preset.minKb?.toString() ?: ""
+                                    selectedFmt = preset.fmt
+                                    selectedUri = null
+                                    resultFile = null
+                                },
+                                label = { Text(stringResource(preset.labelRes)) }
                             )
                         }
+                    }
+                }
+            }
 
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        // File picker section
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Button(
-                                onClick = {
-                                    val mime = if (selectedToolId == "shrink_pdf" || selectedToolId == "pdf_to_img") "application/pdf" else "image/*"
-                                    filePickerLauncher.launch(mime)
-                                },
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Icon(Icons.Outlined.FolderOpen, contentDescription = null)
+            // Selected Tool Execution Area
+            if (selectedToolId != null) {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            val currentTool = toolsList.firstOrNull { it.id == selectedToolId }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                currentTool?.icon?.let { Icon(it, contentDescription = null, tint = MaterialTheme.colorScheme.primary) }
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text(stringResource(R.string.pick_from_gallery))
+                                Text(
+                                    text = currentTool?.let { stringResource(it.titleRes) } ?: "",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
                             }
-                        }
 
-                        if (selectedUri != null) {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            val fileInfo = remember(selectedUri) { readInfo(context, selectedUri!!) }
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = MaterialTheme.colorScheme.surface,
-                                modifier = Modifier.fillMaxWidth()
+                            Spacer(modifier = Modifier.height(12.dp))
+
+                            // File picker section
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Column(modifier = Modifier.padding(12.dp)) {
-                                    Text("Selected file", fontWeight = FontWeight.Medium)
-                                    Text("Size: ${fileInfo.sizeBytes / 1024} KB | Format: ${fileInfo.format} ${fileInfo.width?.let { "| ${it}x${fileInfo.height}" } ?: ""}")
+                                Button(
+                                    onClick = {
+                                        val mime = if (selectedToolId == "shrink_pdf" || selectedToolId == "pdf_to_img") "application/pdf" else "image/*"
+                                        filePickerLauncher.launch(mime)
+                                    },
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(Icons.Outlined.FolderOpen, contentDescription = null)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(stringResource(R.string.pick_from_gallery))
                                 }
                             }
-                        }
 
-                        Spacer(modifier = Modifier.height(12.dp))
+                            if (selectedUri != null) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                val fileInfo = remember(selectedUri) { readInfo(context, selectedUri!!) }
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = MaterialTheme.colorScheme.surface,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(modifier = Modifier.padding(12.dp)) {
+                                        Text("Selected file", fontWeight = FontWeight.Medium)
+                                        Text("Size: ${fileInfo.sizeBytes / 1024} KB | Format: ${fileInfo.format} ${fileInfo.width?.let { "| ${it}x${fileInfo.height}" } ?: ""}")
+                                    }
+                                }
+                            }
 
-                        // Tool parameters based on tool id
-                        if (selectedToolId in listOf("compress", "increase")) {
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Spacer(modifier = Modifier.height(12.dp))
+
+                            // Tool parameters based on tool id
+                            if (selectedToolId in listOf("compress", "increase")) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    OutlinedTextField(
+                                        value = maxKbInput,
+                                        onValueChange = { maxKbInput = it },
+                                        label = { Text(stringResource(R.string.target_kb)) },
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    OutlinedTextField(
+                                        value = minKbInput,
+                                        onValueChange = { minKbInput = it },
+                                        label = { Text(stringResource(R.string.min_kb)) },
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                            }
+
+                            if (selectedToolId == "resize") {
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    OutlinedTextField(
+                                        value = widthPxInput,
+                                        onValueChange = { widthPxInput = it },
+                                        label = { Text(stringResource(R.string.width_px)) },
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    OutlinedTextField(
+                                        value = heightPxInput,
+                                        onValueChange = { heightPxInput = it },
+                                        label = { Text(stringResource(R.string.height_px)) },
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(stringResource(R.string.fit_mode), style = MaterialTheme.typography.labelSmall)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    FilterChip(
+                                        selected = fitMode == FitMode.CROP_FILL,
+                                        onClick = { fitMode = FitMode.CROP_FILL },
+                                        label = { Text(stringResource(R.string.crop_fill)) }
+                                    )
+                                    FilterChip(
+                                        selected = fitMode == FitMode.FIT_WHITE_PADDING,
+                                        onClick = { fitMode = FitMode.FIT_WHITE_PADDING },
+                                        label = { Text(stringResource(R.string.fit_padding)) }
+                                    )
+                                    FilterChip(
+                                        selected = fitMode == FitMode.STRETCH,
+                                        onClick = { fitMode = FitMode.STRETCH },
+                                        label = { Text(stringResource(R.string.stretch)) }
+                                    )
+                                }
+                            }
+
+                            if (selectedToolId == "shrink_pdf") {
                                 OutlinedTextField(
                                     value = maxKbInput,
                                     onValueChange = { maxKbInput = it },
                                     label = { Text(stringResource(R.string.target_kb)) },
                                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                    modifier = Modifier.weight(1f)
-                                )
-                                OutlinedTextField(
-                                    value = minKbInput,
-                                    onValueChange = { minKbInput = it },
-                                    label = { Text(stringResource(R.string.min_kb)) },
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                    modifier = Modifier.weight(1f)
-                                )
-                            }
-                        }
-
-                        if (selectedToolId == "resize") {
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                OutlinedTextField(
-                                    value = widthPxInput,
-                                    onValueChange = { widthPxInput = it },
-                                    label = { Text(stringResource(R.string.width_px)) },
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                    modifier = Modifier.weight(1f)
-                                )
-                                OutlinedTextField(
-                                    value = heightPxInput,
-                                    onValueChange = { heightPxInput = it },
-                                    label = { Text(stringResource(R.string.height_px)) },
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                    modifier = Modifier.weight(1f)
+                                    modifier = Modifier.fillMaxWidth()
                                 )
                             }
 
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(stringResource(R.string.fit_mode), style = MaterialTheme.typography.labelSmall)
-                            Row(
+                            Spacer(modifier = Modifier.height(16.dp))
+
+                            Button(
+                                onClick = {
+                                    if (selectedUri == null) {
+                                        Toast.makeText(context, "Please select a file first", Toast.LENGTH_SHORT).show()
+                                        return@Button
+                                    }
+                                    scope.launch {
+                                        processing = true
+                                        resultFile = null
+                                        errorMessage = null
+                                        try {
+                                            val outDir = File(context.cacheDir, "processed").apply { mkdirs() }
+                                            val maxKb = maxKbInput.toLongOrNull()?.times(KB)
+                                            val minKb = minKbInput.toLongOrNull()?.times(KB)
+
+                                            val file = withContext(Dispatchers.Default) {
+                                                when (selectedToolId) {
+                                                    "compress" -> {
+                                                        val bmp = BitmapLoader.load(context, selectedUri!!)
+                                                        val enc = compressToMax(bmp, maxKb ?: (20 * KB))
+                                                        File(outDir, "compressed_${enc.quality}q.jpg").apply { writeBytes(enc.bytes) }
+                                                    }
+                                                    "increase" -> {
+                                                        val bmp = BitmapLoader.load(context, selectedUri!!)
+                                                        val bytes = ensureMin(bmp, minKb ?: (20 * KB), maxKb ?: (200 * KB), false)
+                                                        File(outDir, "increased.jpg").apply { writeBytes(bytes) }
+                                                    }
+                                                    "resize" -> {
+                                                        val tw = widthPxInput.toIntOrNull() ?: 200
+                                                        val th = heightPxInput.toIntOrNull() ?: 200
+                                                        val bmp = BitmapLoader.load(context, selectedUri!!)
+                                                        val resized = resizeExact(bmp, tw, th, fitMode)
+                                                        val bytes = toJpeg(resized)
+                                                        File(outDir, "resized_${tw}x${th}.jpg").apply { writeBytes(bytes) }
+                                                    }
+                                                    "convert" -> {
+                                                        val bmp = BitmapLoader.load(context, selectedUri!!)
+                                                        val bytes = if (selectedFmt == Fmt.PNG) toPng(bmp) else toJpeg(bmp)
+                                                        val ext = if (selectedFmt == Fmt.PNG) "png" else "jpg"
+                                                        File(outDir, "converted.$ext").apply { writeBytes(bytes) }
+                                                    }
+                                                    "img_to_pdf" -> {
+                                                        val pdfBytes = imagesToPdf(context, listOf(selectedUri!!), maxKb)
+                                                        File(outDir, "doc.pdf").apply { writeBytes(pdfBytes) }
+                                                    }
+                                                    "shrink_pdf" -> {
+                                                        val pdfBytes = shrinkPdf(context, selectedUri!!, maxKb ?: (200 * KB))
+                                                        File(outDir, "shrunk.pdf").apply { writeBytes(pdfBytes) }
+                                                    }
+                                                    "pdf_to_img" -> {
+                                                        val bmp = pdfFirstPageToBitmap(context, selectedUri!!)
+                                                        val bytes = toJpeg(bmp)
+                                                        File(outDir, "page_1.jpg").apply { writeBytes(bytes) }
+                                                    }
+                                                    "crop_rotate" -> {
+                                                        val bmp = BitmapLoader.load(context, selectedUri!!)
+                                                        val rotated = rotate(bmp, 90f)
+                                                        val bytes = toJpeg(rotated)
+                                                        File(outDir, "rotated.jpg").apply { writeBytes(bytes) }
+                                                    }
+                                                    else -> null
+                                                }
+                                            }
+                                            resultFile = file
+                                        } catch (e: Exception) {
+                                            errorMessage = e.message ?: "Processing failed"
+                                        } finally {
+                                            processing = false
+                                        }
+                                    }
+                                },
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                enabled = !processing && selectedUri != null
                             ) {
-                                FilterChip(
-                                    selected = fitMode == FitMode.CROP_FILL,
-                                    onClick = { fitMode = FitMode.CROP_FILL },
-                                    label = { Text(stringResource(R.string.crop_fill)) }
-                                )
-                                FilterChip(
-                                    selected = fitMode == FitMode.FIT_WHITE_PADDING,
-                                    onClick = { fitMode = FitMode.FIT_WHITE_PADDING },
-                                    label = { Text(stringResource(R.string.fit_padding)) }
-                                )
-                                FilterChip(
-                                    selected = fitMode == FitMode.STRETCH,
-                                    onClick = { fitMode = FitMode.STRETCH },
-                                    label = { Text(stringResource(R.string.stretch)) }
-                                )
-                            }
-                        }
-
-                        if (selectedToolId == "shrink_pdf") {
-                            OutlinedTextField(
-                                value = maxKbInput,
-                                onValueChange = { maxKbInput = it },
-                                label = { Text(stringResource(R.string.target_kb)) },
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(16.dp))
-
-                        Button(
-                            onClick = {
-                                if (selectedUri == null) {
-                                    Toast.makeText(context, "Please select a file first", Toast.LENGTH_SHORT).show()
-                                    return@Button
+                                if (processing) {
+                                    CircularProgressIndicator(modifier = Modifier.size(20.dp), color = MaterialTheme.colorScheme.onPrimary)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(stringResource(R.string.processing))
+                                } else {
+                                    Text(stringResource(R.string.convert_button))
                                 }
-                                scope.launch {
-                                    processing = true
-                                    resultFile = null
-                                    errorMessage = null
-                                    try {
-                                        val outDir = File(context.cacheDir, "processed").apply { mkdirs() }
-                                        val maxKb = maxKbInput.toLongOrNull()?.times(KB)
-                                        val minKb = minKbInput.toLongOrNull()?.times(KB)
+                            }
 
-                                        val file = withContext(Dispatchers.Default) {
-                                            when (selectedToolId) {
-                                                "compress" -> {
-                                                    val bmp = BitmapLoader.load(context, selectedUri!!)
-                                                    val enc = compressToMax(bmp, maxKb ?: (20 * KB))
-                                                    File(outDir, "compressed_${enc.quality}q.jpg").apply { writeBytes(enc.bytes) }
-                                                }
-                                                "increase" -> {
-                                                    val bmp = BitmapLoader.load(context, selectedUri!!)
-                                                    val bytes = ensureMin(bmp, minKb ?: (20 * KB), maxKb ?: (200 * KB), false)
-                                                    File(outDir, "increased.jpg").apply { writeBytes(bytes) }
-                                                }
-                                                "resize" -> {
-                                                    val tw = widthPxInput.toIntOrNull() ?: 200
-                                                    val th = heightPxInput.toIntOrNull() ?: 200
-                                                    val bmp = BitmapLoader.load(context, selectedUri!!)
-                                                    val resized = resizeExact(bmp, tw, th, fitMode)
-                                                    val bytes = toJpeg(resized)
-                                                    File(outDir, "resized_${tw}x${th}.jpg").apply { writeBytes(bytes) }
-                                                }
-                                                "convert" -> {
-                                                    val bmp = BitmapLoader.load(context, selectedUri!!)
-                                                    val bytes = if (selectedFmt == Fmt.PNG) toPng(bmp) else toJpeg(bmp)
-                                                    val ext = if (selectedFmt == Fmt.PNG) "png" else "jpg"
-                                                    File(outDir, "converted.$ext").apply { writeBytes(bytes) }
-                                                }
-                                                "img_to_pdf" -> {
-                                                    val pdfBytes = imagesToPdf(context, listOf(selectedUri!!), maxKb)
-                                                    File(outDir, "doc.pdf").apply { writeBytes(pdfBytes) }
-                                                }
-                                                "shrink_pdf" -> {
-                                                    val pdfBytes = shrinkPdf(context, selectedUri!!, maxKb ?: (200 * KB))
-                                                    File(outDir, "shrunk.pdf").apply { writeBytes(pdfBytes) }
-                                                }
-                                                "pdf_to_img" -> {
-                                                    val bmp = pdfFirstPageToBitmap(context, selectedUri!!)
-                                                    val bytes = toJpeg(bmp)
-                                                    File(outDir, "page_1.jpg").apply { writeBytes(bytes) }
-                                                }
-                                                "crop_rotate" -> {
-                                                    val bmp = BitmapLoader.load(context, selectedUri!!)
-                                                    val rotated = rotate(bmp, 90f)
-                                                    val bytes = toJpeg(rotated)
-                                                    File(outDir, "rotated.jpg").apply { writeBytes(bytes) }
-                                                }
-                                                else -> null
+                            // Result Section
+                            AnimatedVisibility(visible = resultFile != null) {
+                                resultFile?.let { res ->
+                                    Surface(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(top = 16.dp),
+                                        shape = RoundedCornerShape(12.dp),
+                                        color = MaterialTheme.colorScheme.surface
+                                    ) {
+                                        Column(modifier = Modifier.padding(16.dp)) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Icon(Icons.Outlined.CheckCircle, contentDescription = null, tint = Color(0xFF16A34A))
+                                                Spacer(modifier = Modifier.width(8.dp))
+                                                Text(
+                                                    stringResource(R.string.result_success),
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = Color(0xFF16A34A)
+                                                )
                                             }
-                                        }
-                                        resultFile = file
-                                    } catch (e: Exception) {
-                                        errorMessage = e.message ?: "Processing failed"
-                                    } finally {
-                                        processing = false
-                                    }
-                                }
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            enabled = !processing && selectedUri != null
-                        ) {
-                            if (processing) {
-                                CircularProgressIndicator(modifier = Modifier.size(20.dp), color = MaterialTheme.colorScheme.onPrimary)
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(stringResource(R.string.processing))
-                            } else {
-                                Text(stringResource(R.string.convert_button))
-                            }
-                        }
+                                            Spacer(modifier = Modifier.height(8.dp))
+                                            Text("${stringResource(R.string.new_size)}: ${res.length() / 1024} KB")
 
-                        // Result Section
-                        AnimatedVisibility(visible = resultFile != null) {
-                            resultFile?.let { res ->
-                                Surface(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(top = 16.dp),
-                                    shape = RoundedCornerShape(12.dp),
-                                    color = MaterialTheme.colorScheme.surface
-                                ) {
-                                    Column(modifier = Modifier.padding(16.dp)) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Icon(Icons.Outlined.CheckCircle, contentDescription = null, tint = Color(0xFF16A34A))
-                                            Spacer(modifier = Modifier.width(8.dp))
-                                            Text(
-                                                stringResource(R.string.result_success),
-                                                fontWeight = FontWeight.Bold,
-                                                color = Color(0xFF16A34A)
-                                            )
-                                        }
-                                        Spacer(modifier = Modifier.height(8.dp))
-                                        Text("${stringResource(R.string.new_size)}: ${res.length() / 1024} KB")
+                                            Spacer(modifier = Modifier.height(12.dp))
 
-                                        Spacer(modifier = Modifier.height(12.dp))
-
-                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                            OutlinedButton(
-                                                onClick = {
-                                                    scope.launch {
-                                                        val savedUri = MediaSaver.saveToDexFormAlbum(context, res)
-                                                        if (savedUri != null) {
-                                                            app.container.mediaRepository.refresh()
-                                                            Toast.makeText(context, context.getString(R.string.saved_to_gallery), Toast.LENGTH_SHORT).show()
-                                                        } else {
-                                                            Toast.makeText(context, "Saved to DexForm album", Toast.LENGTH_SHORT).show()
+                                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                OutlinedButton(
+                                                    onClick = {
+                                                        scope.launch {
+                                                            val savedUri = MediaSaver.saveToDexFormAlbum(context, res)
+                                                            if (savedUri != null) {
+                                                                app.container.mediaRepository.refresh()
+                                                                Toast.makeText(context, context.getString(R.string.saved_to_gallery), Toast.LENGTH_SHORT).show()
+                                                            } else {
+                                                                Toast.makeText(context, "Saved to DexForm album", Toast.LENGTH_SHORT).show()
+                                                            }
                                                         }
-                                                    }
-                                                },
-                                                modifier = Modifier.weight(1f)
-                                            ) {
-                                                Icon(Icons.Outlined.SaveAlt, contentDescription = null)
-                                                Spacer(modifier = Modifier.width(4.dp))
-                                                Text(stringResource(R.string.save_to_gallery))
-                                            }
+                                                    },
+                                                    modifier = Modifier.weight(1f)
+                                                ) {
+                                                    Icon(Icons.Outlined.SaveAlt, contentDescription = null)
+                                                    Spacer(modifier = Modifier.width(4.dp))
+                                                    Text(stringResource(R.string.save_to_gallery))
+                                                }
 
-                                            OutlinedButton(
-                                                onClick = {
-                                                    val resUri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", res)
-                                                    val intent = Intent(Intent.ACTION_SEND).apply {
-                                                        type = "*/*"
-                                                        putExtra(Intent.EXTRA_STREAM, resUri)
-                                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                                    }
-                                                    context.startActivity(Intent.createChooser(intent, "Share Result"))
-                                                },
-                                                modifier = Modifier.weight(1f)
-                                            ) {
-                                                Icon(Icons.Outlined.Share, contentDescription = null)
-                                                Spacer(modifier = Modifier.width(4.dp))
-                                                Text(stringResource(R.string.share))
+                                                OutlinedButton(
+                                                    onClick = {
+                                                        val resUri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", res)
+                                                        val intent = Intent(Intent.ACTION_SEND).apply {
+                                                            type = "*/*"
+                                                            putExtra(Intent.EXTRA_STREAM, resUri)
+                                                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                                        }
+                                                        context.startActivity(Intent.createChooser(intent, "Share Result"))
+                                                    },
+                                                    modifier = Modifier.weight(1f)
+                                                ) {
+                                                    Icon(Icons.Outlined.Share, contentDescription = null)
+                                                    Spacer(modifier = Modifier.width(4.dp))
+                                                    Text(stringResource(R.string.share))
+                                                }
                                             }
                                         }
                                     }
                                 }
                             }
-                        }
 
-                        // Error section
-                        AnimatedVisibility(visible = errorMessage != null) {
-                            errorMessage?.let { msg ->
-                                Surface(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(top = 16.dp),
-                                    shape = RoundedCornerShape(12.dp),
-                                    color = MaterialTheme.colorScheme.errorContainer
-                                ) {
-                                    Text(
-                                        text = msg,
-                                        modifier = Modifier.padding(16.dp),
-                                        color = MaterialTheme.colorScheme.onErrorContainer
-                                    )
+                            // Error section
+                            AnimatedVisibility(visible = errorMessage != null) {
+                                errorMessage?.let { msg ->
+                                    Surface(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(top = 16.dp),
+                                        shape = RoundedCornerShape(12.dp),
+                                        color = MaterialTheme.colorScheme.errorContainer
+                                    ) {
+                                        Text(
+                                            text = msg,
+                                            modifier = Modifier.padding(16.dp),
+                                            color = MaterialTheme.colorScheme.onErrorContainer
+                                        )
+                                    }
                                 }
                             }
                         }
                     }
                 }
             }
-        }
 
-        // Tool List Grid / Items
-        item {
-            Text(
-                text = stringResource(R.string.tools_title),
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
-            )
-        }
-
-        items(toolsList) { tool ->
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable {
-                        selectedToolId = tool.id
-                        selectedUri = null
-                        resultFile = null
-                    },
-                shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = if (selectedToolId == tool.id) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
+            // Tool List Grid / Items
+            item {
+                Text(
+                    text = stringResource(R.string.tools_title),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
                 )
-            ) {
-                Row(
-                    modifier = Modifier.padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(48.dp)
-                            .background(
-                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
-                                shape = RoundedCornerShape(12.dp)
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(tool.icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                    }
-                    Spacer(modifier = Modifier.width(16.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = stringResource(tool.titleRes),
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Text(
-                            text = stringResource(tool.descRes),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Icon(
-                        Icons.Outlined.ArrowForward,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+            }
+
+            items(toolsList) { tool ->
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            selectedToolId = tool.id
+                            selectedUri = null
+                            resultFile = null
+                        },
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (selectedToolId == tool.id) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
                     )
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .background(
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
+                                    shape = RoundedCornerShape(12.dp)
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(tool.icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        }
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = stringResource(tool.titleRes),
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = stringResource(tool.descRes),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Icon(
+                            Icons.Outlined.ArrowForward,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
         }

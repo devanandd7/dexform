@@ -19,12 +19,14 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.FolderZip
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -51,7 +53,8 @@ import com.dexform.app.R
 @Composable
 fun AlbumsScreen(
     onAlbumClick: (bucketId: Long, albumName: String) -> Unit = { _, _ -> },
-    onOpenTools: () -> Unit = {}
+    onOpenTools: () -> Unit = {},
+    onNavigateToSettings: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val app = context.applicationContext as App
@@ -61,7 +64,12 @@ fun AlbumsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(stringResource(R.string.tab_albums), fontWeight = FontWeight.Bold) }
+                title = { Text(stringResource(R.string.tab_albums), fontWeight = FontWeight.Bold) },
+                actions = {
+                    IconButton(onClick = onNavigateToSettings) {
+                        Icon(Icons.Outlined.Settings, contentDescription = "Settings")
+                    }
+                }
             )
         }
     ) { innerPadding ->

@@ -37,6 +37,7 @@ import com.dexform.app.ui.browser.BrowserScreen
 import com.dexform.app.ui.gallery.AlbumDetailScreen
 import com.dexform.app.ui.gallery.AlbumsScreen
 import com.dexform.app.ui.gallery.PhotosScreen
+import com.dexform.app.ui.settings.SettingsScreen
 import com.dexform.app.ui.theme.DexFormTheme
 import com.dexform.app.ui.tools.ToolsScreen
 
@@ -129,6 +130,7 @@ fun DexFormApp() {
         ) {
             composable(BottomNavItem.Photos.route) {
                 PhotosScreen(
+                    onNavigateToSettings = { navController.navigate("settings") },
                     onOpenBrowser = { navController.navigate(BottomNavItem.Browser.route) }
                 )
             }
@@ -137,7 +139,8 @@ fun DexFormApp() {
                     onAlbumClick = { bucketId, name ->
                         navController.navigate("album_detail/$bucketId/$name")
                     },
-                    onOpenTools = { navController.navigate(BottomNavItem.Tools.route) }
+                    onOpenTools = { navController.navigate(BottomNavItem.Tools.route) },
+                    onNavigateToSettings = { navController.navigate("settings") }
                 )
             }
             composable(
@@ -156,10 +159,17 @@ fun DexFormApp() {
                 )
             }
             composable(BottomNavItem.Tools.route) {
-                ToolsScreen()
+                ToolsScreen(
+                    onNavigateToSettings = { navController.navigate("settings") }
+                )
             }
             composable(BottomNavItem.Browser.route) {
                 BrowserScreen()
+            }
+            composable("settings") {
+                SettingsScreen(
+                    onBack = { navController.popBackStack() }
+                )
             }
         }
     }
