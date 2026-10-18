@@ -29,9 +29,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -39,7 +41,10 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.ArrowForward
+import androidx.compose.material.icons.outlined.Cancel
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.DeleteSweep
+import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.MoreVert
@@ -55,6 +60,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -64,6 +70,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -75,6 +82,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -82,6 +90,8 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.dexform.app.App
 import com.dexform.app.R
+import com.dexform.app.data.db.HistoryEntity
+import kotlinx.coroutines.launch
 import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -89,10 +99,12 @@ import java.io.File
 fun BrowserScreen() {
     val context = LocalContext.current
     val app = context.applicationContext as App
+    val scope = rememberCoroutineScope()
     val viewModel = remember { BrowserViewModel(app.container) }
 
     val state by viewModel.state.collectAsStateWithLifecycle()
     val quickLinks by app.container.quickLinkDao.getAll().collectAsState(initial = emptyList())
+    val historyList by app.container.historyDao.getAllHistory().collectAsState(initial = emptyList())
 
     var webViewInstance by remember { mutableStateOf<WebView?>(null) }
     var currentUrl by remember { mutableStateOf("https://duckduckgo.com") }
@@ -100,6 +112,7 @@ fun BrowserScreen() {
     var pageProgress by remember { mutableFloatStateOf(0f) }
     var isLoading by remember { mutableStateOf(false) }
     var showQuickLinksHome by remember { mutableStateOf(false) }
+    var showHistoryOverlay by remember { mutableStateOf(false) }
     var showPickerOverlay by remember { mutableStateOf(false) }
     var cameraUri by remember { mutableStateOf<Uri?>(null) }
     var showMenu by remember { mutableStateOf(false) }
@@ -128,13 +141,15 @@ fun BrowserScreen() {
             else -> "https://duckduckgo.com/?q=${Uri.encode(trimmed)}"
         }
         showQuickLinksHome = false
+        showHistoryOverlay = false
         currentUrl = targetUrl
         inputUrl = targetUrl
         webViewInstance?.loadUrl(targetUrl)
     }
 
-    BackHandler(enabled = state !is UploadState.Idle || showPickerOverlay || webViewInstance?.canGoBack() == true) {
+    BackHandler(enabled = state !is UploadState.Idle || showPickerOverlay || showHistoryOverlay || webViewInstance?.canGoBack() == true) {
         when {
+            showHistoryOverlay -> showHistoryOverlay = false
             showPickerOverlay -> showPickerOverlay = false
             state !is UploadState.Idle -> viewModel.cancel()
             webViewInstance?.canGoBack() == true -> webViewInstance?.goBack()
@@ -205,6 +220,22 @@ fun BrowserScreen() {
                                     }
                                 )
 
+                                // Clear URL Cross Icon ("x")
+                                if (inputUrl.isNotEmpty()) {
+                                    IconButton(
+                                        onClick = { inputUrl = "" },
+                                        modifier = Modifier.size(24.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Outlined.Cancel,
+                                            contentDescription = "Clear URL",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                }
+
                                 if (isLoading) {
                                     IconButton(
                                         onClick = { webViewInstance?.stopLoading() },
@@ -231,6 +262,16 @@ fun BrowserScreen() {
                             expanded = showMenu,
                             onDismissRequest = { showMenu = false }
                         ) {
+                            DropdownMenuItem(
+                                leadingIcon = {
+                                    Icon(Icons.Outlined.History, contentDescription = null)
+                                },
+                                text = { Text("Browsing History") },
+                                onClick = {
+                                    showMenu = false
+                                    showHistoryOverlay = true
+                                }
+                            )
                             DropdownMenuItem(
                                 text = { Text("Open Test Page") },
                                 onClick = {
@@ -278,7 +319,10 @@ fun BrowserScreen() {
                                     webViewInstance?.clearCache(true)
                                     webViewInstance?.clearHistory()
                                     CookieManager.getInstance().removeAllCookies(null)
-                                    Toast.makeText(context, "Browsing data cleared", Toast.LENGTH_SHORT).show()
+                                    scope.launch {
+                                        app.container.historyDao.clearHistory()
+                                    }
+                                    Toast.makeText(context, "Browsing data and history cleared", Toast.LENGTH_SHORT).show()
                                 }
                             )
                         }
@@ -364,8 +408,16 @@ fun BrowserScreen() {
                             override fun onPageFinished(view: WebView, url: String?) {
                                 view.evaluateJavascript(UPLOAD_HOOK_JS, null)
                                 url?.let {
-                                    currentUrl = it
-                                    inputUrl = it
+                                    if (it.isNotBlank() && !it.startsWith("about:")) {
+                                        currentUrl = it
+                                        inputUrl = it
+                                        val pageTitle = view.title?.ifBlank { it } ?: it
+                                        scope.launch {
+                                            app.container.historyDao.insertHistory(
+                                                HistoryEntity(title = pageTitle, url = it)
+                                            )
+                                        }
+                                    }
                                 }
                                 isLoading = false
                             }
@@ -468,6 +520,106 @@ fun BrowserScreen() {
                                             Icon(Icons.Outlined.Public, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                                             Spacer(modifier = Modifier.height(8.dp))
                                             Text(link.title, fontWeight = FontWeight.Medium, maxLines = 1)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Browsing History Overlay
+            if (showHistoryOverlay) {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(16.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            IconButton(onClick = { showHistoryOverlay = false }) {
+                                Icon(Icons.Outlined.Close, contentDescription = "Close History")
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                "Browsing History",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.weight(1f)
+                            )
+                            if (historyList.isNotEmpty()) {
+                                OutlinedButton(
+                                    onClick = {
+                                        scope.launch {
+                                            app.container.historyDao.clearHistory()
+                                        }
+                                    }
+                                ) {
+                                    Icon(Icons.Outlined.DeleteSweep, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Clear")
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        if (historyList.isEmpty()) {
+                            Box(
+                                modifier = Modifier.fillMaxSize(),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("No history found", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        } else {
+                            LazyColumn(
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.fillMaxSize()
+                            ) {
+                                items(items = historyList, key = { it.id }) { item ->
+                                    Card(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable {
+                                                loadUrl(item.url)
+                                                showHistoryOverlay = false
+                                            },
+                                        shape = RoundedCornerShape(12.dp),
+                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(16.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                Icons.Outlined.History,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.primary
+                                            )
+                                            Spacer(modifier = Modifier.width(16.dp))
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = item.title,
+                                                    style = MaterialTheme.typography.titleMedium,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                                Text(
+                                                    text = item.url,
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
                                         }
                                     }
                                 }

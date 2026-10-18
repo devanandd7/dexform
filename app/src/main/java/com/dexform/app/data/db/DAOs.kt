@@ -28,3 +28,15 @@ interface QuickLinkDao {
     @Delete
     suspend fun delete(link: QuickLinkEntity)
 }
+
+@Dao
+interface HistoryDao {
+    @Query("SELECT * FROM browsing_history ORDER BY visitedMs DESC")
+    fun getAllHistory(): Flow<List<HistoryEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertHistory(item: HistoryEntity)
+
+    @Query("DELETE FROM browsing_history")
+    suspend fun clearHistory()
+}

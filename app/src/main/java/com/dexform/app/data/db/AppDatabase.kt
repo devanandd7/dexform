@@ -6,13 +6,14 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 
 @Database(
-    entities = [SiteRuleEntity::class, QuickLinkEntity::class],
-    version = 1,
+    entities = [SiteRuleEntity::class, QuickLinkEntity::class, HistoryEntity::class],
+    version = 2,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun siteRuleDao(): SiteRuleDao
     abstract fun quickLinkDao(): QuickLinkDao
+    abstract fun historyDao(): HistoryDao
 
     companion object {
         @Volatile
