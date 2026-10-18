@@ -6,8 +6,8 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.core.content.FileProvider
 import com.dexform.app.core.imaging.BitmapLoader
-import com.dexform.app.core.imaging.FitMode
 import com.dexform.app.core.imaging.FileInfo
+import com.dexform.app.core.imaging.FitMode
 import com.dexform.app.core.imaging.Fmt
 import com.dexform.app.core.imaging.KB
 import com.dexform.app.core.imaging.Requirement
@@ -70,9 +70,18 @@ object UploadProcessor {
         val target = pickTarget(infos.map { it.second.format }, req)
         val outDir = File(ctx.cacheDir, "processed").apply { mkdirs() }
 
+        // Compute per-file budget if multiple files are selected
+        val fileCount = infos.size
+        val effectiveMaxBytes = if (req.maxBytes != null && fileCount > 1) {
+            (req.maxBytes / fileCount)
+        } else {
+            req.maxBytes
+        }
+        val effectiveReq = req.copy(maxBytes = effectiveMaxBytes)
+
         // Case: form wants ONE PDF, user picked several images -> merge
         if (target == Fmt.PDF && infos.size > 1 && infos.all { it.second.format.isImage() } && (mergeAll || !multiple)) {
-            val bytes = imagesToPdf(ctx, infos.map { it.first }, req.maxBytes)
+            val bytes = imagesToPdf(ctx, infos.map { it.first }, effectiveReq.maxBytes)
             return@withContext listOf(
                 write(
                     ctx, outDir, safeName("document", bytes.size.toLong(), "pdf"), bytes, Fmt.PDF, null, null,
@@ -82,9 +91,11 @@ object UploadProcessor {
         }
 
         infos.map { (uri, info) ->
-            if (!needsConversion(info, req) && target == info.format) {
+            val needsConv = needsConversion(info, effectiveReq) || target != info.format
+            if (!needsConv) {
                 return@map passThrough(ctx, uri, info, outDir)
             }
+
             val bytes: ByteArray
             val ext: String
             val prefix: String
@@ -93,13 +104,13 @@ object UploadProcessor {
 
             when {
                 info.format.isImage() && target == Fmt.PDF -> {
-                    bytes = imagesToPdf(ctx, listOf(uri), req.maxBytes)
+                    bytes = imagesToPdf(ctx, listOf(uri), effectiveReq.maxBytes)
                     ext = "pdf"
                     prefix = "document"
                 }
                 info.format == Fmt.PDF && target == Fmt.PDF -> {
-                    bytes = if (req.maxBytes != null && info.sizeBytes > req.maxBytes) {
-                        shrinkPdf(ctx, uri, req.maxBytes)
+                    bytes = if (effectiveReq.maxBytes != null && (info.sizeBytes <= 0 || info.sizeBytes > effectiveReq.maxBytes)) {
+                        shrinkPdf(ctx, uri, effectiveReq.maxBytes)
                     } else {
                         ctx.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
                     }
@@ -117,8 +128,8 @@ object UploadProcessor {
                         bmp = resizeExact(bmp, req.widthPx!!, req.heightPx!!, FitMode.CROP_FILL)
                     }
                     bytes = when (target) {
-                        Fmt.PNG -> pngWithLimit(bmp, req.maxBytes, lock)
-                        else -> jpegForRequirement(bmp, req, lock)
+                        Fmt.PNG -> pngWithLimit(bmp, effectiveReq.maxBytes, lock)
+                        else -> jpegForRequirement(bmp, effectiveReq, lock)
                     }
                     ext = if (target == Fmt.PNG) "png" else "jpg"
                     prefix = "photo"
@@ -162,7 +173,10 @@ object UploadProcessor {
     private fun displayName(ctx: Context, uri: Uri): String {
         return try {
             ctx.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
-                if (it.moveToFirst()) it.getString(0) else null
+                if (it.moveToFirst()) {
+                    val idx = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (idx >= 0) it.getString(idx) else null
+                } else null
             } ?: uri.lastPathSegment ?: "file"
         } catch (_: Exception) {
             uri.lastPathSegment ?: "file"
@@ -171,7 +185,7 @@ object UploadProcessor {
 
     private fun passThrough(ctx: Context, uri: Uri, info: FileInfo, outDir: File): Processed {
         val name = displayName(ctx, uri)
-        val unsafe = Regex("[^A-Za-z0-9_.-]").containsMatchIn(name) // spaces, brackets, Hindi names
+        val unsafe = Regex("[^A-Za-z0-9_.-]").containsMatchIn(name)
         if (!unsafe) {
             return Processed(uri, name, info.sizeBytes, info.format, info.width, info.height, info.sizeBytes, false)
         }

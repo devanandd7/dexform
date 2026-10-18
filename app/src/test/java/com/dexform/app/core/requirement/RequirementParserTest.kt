@@ -1,9 +1,14 @@
 package com.dexform.app.core.requirement
 
+import com.dexform.app.core.imaging.FileInfo
 import com.dexform.app.core.imaging.Fmt
 import com.dexform.app.core.imaging.KB
 import com.dexform.app.core.imaging.MB
+import com.dexform.app.core.imaging.Requirement
+import com.dexform.app.core.imaging.needsConversion
+import com.dexform.app.ui.browser.UploadProcessor
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -94,5 +99,31 @@ class RequirementParserTest {
     fun testFirstHintWinsForSize() {
         val req = RequirementParser.parse(null, listOf("Photo max 20KB", "Photo max 20KB Signature max 10KB"))
         assertEquals(20 * KB, req.maxBytes)
+    }
+
+    @Test
+    fun testNeedsConversionWithDimensionsMismatch() {
+        val req = Requirement(maxBytes = 50 * KB, widthPx = 200, heightPx = 230, formats = setOf(Fmt.JPG))
+        
+        // Mismatched dimensions (3072x4096)
+        val infoMismatched = FileInfo(sizeBytes = 40 * KB, format = Fmt.JPG, width = 3072, height = 4096)
+        assertTrue("Image with 3072x4096 must need conversion when 200x230 requested", needsConversion(infoMismatched, req))
+
+        // Unknown size (-1)
+        val infoUnknownSize = FileInfo(sizeBytes = -1L, format = Fmt.JPG, width = 200, height = 230)
+        assertTrue("Unknown size file (-1) must need conversion", needsConversion(infoUnknownSize, req))
+
+        // Matching
+        val infoMatching = FileInfo(sizeBytes = 40 * KB, format = Fmt.JPG, width = 200, height = 230)
+        assertFalse("Matching file should not need conversion", needsConversion(infoMatching, req))
+    }
+
+    @Test
+    fun testPickTargetFormat() {
+        val reqPdf = Requirement(formats = setOf(Fmt.PDF))
+        assertEquals(Fmt.PDF, UploadProcessor.pickTarget(listOf(Fmt.JPG), reqPdf))
+
+        val reqJpg = Requirement(formats = setOf(Fmt.JPG))
+        assertEquals(Fmt.JPG, UploadProcessor.pickTarget(listOf(Fmt.PDF), reqJpg))
     }
 }
