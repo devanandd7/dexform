@@ -72,6 +72,7 @@ class BrowserViewModel(private val appContainer: AppContainer) : ViewModel() {
             try {
                 val items = UploadProcessor.process(ctx, uris, req, multiple, mergeAll)
                 _state.value = UploadState.Preview(items, req)
+                confirm()
             } catch (e: TargetNotReachable) {
                 _state.value = UploadState.Error(e.message ?: "Could not make this file fit", req)
             } catch (e: Exception) {

@@ -15,7 +15,6 @@ import com.dexform.app.core.imaging.TargetNotReachable
 import com.dexform.app.core.imaging.compressToMax
 import com.dexform.app.core.imaging.ensureMin
 import com.dexform.app.core.imaging.imagesToPdf
-import com.dexform.app.core.imaging.needsConversion
 import com.dexform.app.core.imaging.pdfFirstPageToBitmap
 import com.dexform.app.core.imaging.readInfo
 import com.dexform.app.core.imaging.resizeExact
@@ -66,81 +65,109 @@ object UploadProcessor {
         multiple: Boolean,
         mergeAll: Boolean
     ): List<Processed> = withContext(Dispatchers.Default) {
-        val infos = uris.map { it to readInfo(ctx, it) }
-        val target = pickTarget(infos.map { it.second.format }, req)
+        // Tool 1: File Checker (read type, format, size, dimensions)
+        val rawInfos = uris.map { it to readInfo(ctx, it) }
+        val targetFmt = pickTarget(rawInfos.map { it.second.format }, req)
         val outDir = File(ctx.cacheDir, "processed").apply { mkdirs() }
 
-        // Compute per-file budget if multiple files are selected
-        val fileCount = infos.size
+        // Compute effective per-file maxBytes
+        val fileCount = rawInfos.size
         val effectiveMaxBytes = if (req.maxBytes != null && fileCount > 1) {
-            (req.maxBytes / fileCount)
+            req.maxBytes / fileCount
         } else {
             req.maxBytes
         }
         val effectiveReq = req.copy(maxBytes = effectiveMaxBytes)
 
-        // Case: form wants ONE PDF, user picked several images -> merge
-        if (target == Fmt.PDF && infos.size > 1 && infos.all { it.second.format.isImage() } && (mergeAll || !multiple)) {
-            val bytes = imagesToPdf(ctx, infos.map { it.first }, effectiveReq.maxBytes)
+        // Case: Form wants 1 PDF, user selected multiple images -> Merge into 1 PDF
+        if (targetFmt == Fmt.PDF && rawInfos.size > 1 && rawInfos.all { it.second.format.isImage() } && (mergeAll || !multiple)) {
+            val pdfBytes = imagesToPdf(ctx, rawInfos.map { it.first }, effectiveReq.maxBytes)
+            val name = safeName("document", pdfBytes.size.toLong(), "pdf")
             return@withContext listOf(
-                write(
-                    ctx, outDir, safeName("document", bytes.size.toLong(), "pdf"), bytes, Fmt.PDF, null, null,
-                    infos.sumOf { it.second.sizeBytes }
-                )
+                write(ctx, outDir, name, pdfBytes, Fmt.PDF, null, null, rawInfos.sumOf { it.second.sizeBytes })
             )
         }
 
-        infos.map { (uri, info) ->
-            val needsConv = needsConversion(info, effectiveReq) || target != info.format
-            if (!needsConv) {
-                return@map passThrough(ctx, uri, info, outDir)
-            }
+        // Sequential Multi-Tool Pipeline per file
+        rawInfos.map { (uri, info) ->
+            var currentFmt = info.format
+            var currentBytes: ByteArray? = null
+            var currentBmp: Bitmap? = null
+            val originalSize = info.sizeBytes
 
-            val bytes: ByteArray
-            val ext: String
-            val prefix: String
-            var w: Int? = null
-            var h: Int? = null
-
+            // Tool 2: Format Converter & Type Normalization
             when {
-                info.format.isImage() && target == Fmt.PDF -> {
-                    bytes = imagesToPdf(ctx, listOf(uri), effectiveReq.maxBytes)
-                    ext = "pdf"
-                    prefix = "document"
+                currentFmt.isImage() && targetFmt == Fmt.PDF -> {
+                    currentBytes = imagesToPdf(ctx, listOf(uri), effectiveReq.maxBytes)
+                    currentFmt = Fmt.PDF
                 }
-                info.format == Fmt.PDF && target == Fmt.PDF -> {
-                    bytes = if (effectiveReq.maxBytes != null && (info.sizeBytes <= 0 || info.sizeBytes > effectiveReq.maxBytes)) {
-                        shrinkPdf(ctx, uri, effectiveReq.maxBytes)
-                    } else {
-                        ctx.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
-                    }
-                    ext = "pdf"
-                    prefix = "document"
+                currentFmt == Fmt.PDF && targetFmt.isImage() -> {
+                    currentBmp = pdfFirstPageToBitmap(ctx, uri)
+                    currentFmt = Fmt.JPG
                 }
-                else -> { // image -> image, or PDF -> image
-                    var bmp = if (info.format == Fmt.PDF) {
-                        pdfFirstPageToBitmap(ctx, uri)
-                    } else {
-                        BitmapLoader.load(ctx, uri, 2000)
-                    }
-                    val lock = req.widthPx != null && req.heightPx != null
-                    if (lock) {
-                        bmp = resizeExact(bmp, req.widthPx!!, req.heightPx!!, FitMode.CROP_FILL)
-                    }
-                    bytes = when (target) {
-                        Fmt.PNG -> pngWithLimit(bmp, effectiveReq.maxBytes, lock)
-                        else -> jpegForRequirement(bmp, effectiveReq, lock)
-                    }
-                    ext = if (target == Fmt.PNG) "png" else "jpg"
-                    prefix = "photo"
-                    w = bmp.width
-                    h = bmp.height
+                currentFmt == Fmt.PDF && targetFmt == Fmt.PDF -> {
+                    // Keep as PDF
+                }
+                else -> {
+                    currentBmp = BitmapLoader.load(ctx, uri, 2000)
+                    currentFmt = targetFmt
                 }
             }
-            write(
-                ctx, outDir, safeName(prefix, bytes.size.toLong(), ext), bytes,
-                if (ext == "pdf") Fmt.PDF else target, w, h, info.sizeBytes
-            )
+
+            // Tool 3: Pixel Resizer / Cropper (if target is image and dimensions requested)
+            if (currentBmp != null) {
+                val hasDims = req.widthPx != null || req.heightPx != null
+                if (hasDims) {
+                    val targetW = req.widthPx ?: (currentBmp.width * (req.heightPx!!.toFloat() / currentBmp.height)).toInt().coerceAtLeast(1)
+                    val targetH = req.heightPx ?: (currentBmp.height * (req.widthPx!!.toFloat() / currentBmp.width)).toInt().coerceAtLeast(1)
+
+                    val isSignature = targetW < 200 || targetH < 100
+                    val fitMode = if (isSignature) FitMode.FIT_WHITE_PADDING else FitMode.CROP_FILL
+
+                    currentBmp = resizeExact(currentBmp, targetW, targetH, fitMode)
+                }
+            }
+
+            // Tool 4: Size Targeter (Compress / Increase Size / Shrink PDF)
+            val finalBytes: ByteArray
+            var finalW: Int? = null
+            var finalH: Int? = null
+
+            if (currentFmt == Fmt.PDF) {
+                finalBytes = if (currentBytes != null) {
+                    currentBytes
+                } else if (effectiveReq.maxBytes != null && (info.sizeBytes <= 0 || info.sizeBytes > effectiveReq.maxBytes)) {
+                    shrinkPdf(ctx, uri, effectiveReq.maxBytes)
+                } else {
+                    ctx.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
+                }
+            } else {
+                val bmp = currentBmp ?: BitmapLoader.load(ctx, uri, 2000)
+                finalW = bmp.width
+                finalH = bmp.height
+
+                val lockDims = req.widthPx != null && req.heightPx != null
+                finalBytes = when {
+                    targetFmt == Fmt.PNG -> pngWithLimit(bmp, effectiveReq.maxBytes, lockDims)
+                    effectiveReq.maxBytes != null -> {
+                        val enc = compressToMax(bmp, effectiveReq.maxBytes, lockDims)
+                        if (effectiveReq.minBytes != null && enc.bytes.size < effectiveReq.minBytes) {
+                            ensureMin(bmp, effectiveReq.minBytes, effectiveReq.maxBytes, lockDims)
+                        } else {
+                            enc.bytes
+                        }
+                    }
+                    effectiveReq.minBytes != null -> ensureMin(bmp, effectiveReq.minBytes, Long.MAX_VALUE, lockDims)
+                    else -> if (targetFmt == Fmt.PNG) toPng(bmp) else toJpeg(bmp)
+                }
+            }
+
+            // Tool 5: Safe File Exposer
+            val ext = if (currentFmt == Fmt.PDF) "pdf" else if (targetFmt == Fmt.PNG) "png" else "jpg"
+            val prefix = if (currentFmt == Fmt.PDF) "document" else "photo"
+            val name = safeName(prefix, finalBytes.size.toLong(), ext)
+
+            write(ctx, outDir, name, finalBytes, currentFmt, finalW, finalH, originalSize)
         }
     }
 
@@ -181,18 +208,6 @@ object UploadProcessor {
         } catch (_: Exception) {
             uri.lastPathSegment ?: "file"
         }
-    }
-
-    private fun passThrough(ctx: Context, uri: Uri, info: FileInfo, outDir: File): Processed {
-        val name = displayName(ctx, uri)
-        val unsafe = Regex("[^A-Za-z0-9_.-]").containsMatchIn(name)
-        if (!unsafe) {
-            return Processed(uri, name, info.sizeBytes, info.format, info.width, info.height, info.sizeBytes, false)
-        }
-        val ext = name.substringAfterLast('.', "").lowercase().ifBlank { "jpg" }
-        val bytes = ctx.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
-        return write(ctx, outDir, safeName("file", bytes.size.toLong(), ext), bytes, info.format, info.width, info.height, info.sizeBytes)
-            .copy(converted = false)
     }
 
     private fun write(
