@@ -24,13 +24,12 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.CloudDownload
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Download
-import androidx.compose.material.icons.outlined.Info
-import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Memory
 import androidx.compose.material.icons.outlined.Psychology
 import androidx.compose.material.icons.outlined.SdCard
@@ -38,7 +37,6 @@ import androidx.compose.material.icons.outlined.Security
 import androidx.compose.material.icons.outlined.Send
 import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -74,7 +72,8 @@ import androidx.compose.ui.window.Dialog
 import com.dexform.app.App
 import com.dexform.app.R
 import com.dexform.app.core.ai.ModelStatus
-import com.dexform.app.core.ocr.OcrEngine
+import com.dexform.app.core.ai.MultimodalFormAnalyzer
+import com.dexform.app.core.ai.StructuredFormRequirements
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -93,7 +92,7 @@ fun SettingsScreen(onBack: () -> Unit = {}) {
     var aiGenerating by remember { mutableStateOf(false) }
 
     var ocrExtracting by remember { mutableStateOf(false) }
-    var ocrTextResult by remember { mutableStateOf<String?>(null) }
+    var structuredResult by remember { mutableStateOf<StructuredFormRequirements?>(null) }
 
     var showFileInfoThumbnails by remember { mutableStateOf(true) }
     var saveConvertedToAlbum by remember { mutableStateOf(true) }
@@ -104,12 +103,12 @@ fun SettingsScreen(onBack: () -> Unit = {}) {
         if (uri != null) {
             scope.launch {
                 ocrExtracting = true
-                ocrTextResult = null
+                structuredResult = null
                 try {
-                    val result = OcrEngine.extractText(context, uri)
-                    ocrTextResult = result.fullText.ifBlank { "No text detected in image" }
+                    val result = MultimodalFormAnalyzer.analyzeFormImage(context, uri, localAi)
+                    structuredResult = result
                 } catch (e: Exception) {
-                    ocrTextResult = "OCR Error: ${e.message}"
+                    Toast.makeText(context, "Analysis Error: ${e.message}", Toast.LENGTH_SHORT).show()
                 } finally {
                     ocrExtracting = false
                 }
@@ -171,7 +170,7 @@ fun SettingsScreen(onBack: () -> Unit = {}) {
                                     fontWeight = FontWeight.Bold
                                 )
                                 Text(
-                                    text = "100% On-Device INT4 Quantized AI Model",
+                                    text = "100% On-Device INT4 Multimodal AI Model",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -320,7 +319,7 @@ fun SettingsScreen(onBack: () -> Unit = {}) {
                 }
             }
 
-            // On-Device ML Kit OCR Card
+            // Dual-Path Multimodal Analysis (OCR + AI Vision) Card
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -339,7 +338,7 @@ fun SettingsScreen(onBack: () -> Unit = {}) {
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(
-                                    Icons.Outlined.TextFields,
+                                    Icons.Outlined.AutoAwesome,
                                     contentDescription = null,
                                     tint = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.size(24.dp)
@@ -348,12 +347,12 @@ fun SettingsScreen(onBack: () -> Unit = {}) {
                             Spacer(modifier = Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "On-Device OCR (ML Kit)",
+                                    text = "Multimodal Image Analysis (OCR + AI)",
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold
                                 )
                                 Text(
-                                    text = "Extract text from images locally without internet",
+                                    text = "2-Path processing: OCR text extraction + Gemma AI correction",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -370,45 +369,69 @@ fun SettingsScreen(onBack: () -> Unit = {}) {
                             if (ocrExtracting) {
                                 CircularProgressIndicator(modifier = Modifier.size(18.dp), color = MaterialTheme.colorScheme.onPrimary)
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("Extracting Text...")
+                                Text("Analyzing Image (OCR + AI)...")
                             } else {
                                 Icon(Icons.Outlined.TextFields, contentDescription = null)
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("Select Image & Extract Text")
+                                Text("Select Image for Multimodal Analysis")
                             }
                         }
 
-                        AnimatedVisibility(visible = ocrTextResult != null) {
-                            ocrTextResult?.let { text ->
+                        AnimatedVisibility(visible = structuredResult != null) {
+                            structuredResult?.let { res ->
                                 Surface(
-                                    shape = RoundedCornerShape(8.dp),
+                                    shape = RoundedCornerShape(12.dp),
                                     color = MaterialTheme.colorScheme.surface,
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .padding(top = 12.dp)
                                 ) {
-                                    Column(modifier = Modifier.padding(12.dp)) {
+                                    Column(modifier = Modifier.padding(16.dp)) {
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
                                             Text(
-                                                "Extracted Text:",
+                                                "Structured Form Requirements",
                                                 fontWeight = FontWeight.Bold,
+                                                style = MaterialTheme.typography.titleMedium,
                                                 modifier = Modifier.weight(1f)
                                             )
                                             IconButton(
                                                 onClick = {
                                                     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                                    clipboard.setPrimaryClip(ClipData.newPlainText("OCR", text))
-                                                    Toast.makeText(context, "Text copied to clipboard", Toast.LENGTH_SHORT).show()
+                                                    clipboard.setPrimaryClip(ClipData.newPlainText("Analysis", res.correctedText))
+                                                    Toast.makeText(context, "Copied to clipboard", Toast.LENGTH_SHORT).show()
                                                 }
                                             ) {
                                                 Icon(Icons.Outlined.ContentCopy, contentDescription = "Copy")
                                             }
                                         }
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        Text(text = text, style = MaterialTheme.typography.bodyMedium)
+
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text("Field Type: ${res.fieldType}", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+                                        Text("Max KB: ${res.maxKb?.let { "$it KB" } ?: "Not specified"}")
+                                        Text("Min KB: ${res.minKb?.let { "$it KB" } ?: "None"}")
+                                        Text("Dimensions: ${if (res.widthPx != null) "${res.widthPx}x${res.heightPx} px" else "Free"}")
+                                        Text("Allowed Formats: ${res.formats.joinToString("/")}")
+
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text("Corrected Text (AI Typos Fixed):", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                        Surface(
+                                            shape = RoundedCornerShape(6.dp),
+                                            color = MaterialTheme.colorScheme.surfaceVariant,
+                                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+                                        ) {
+                                            Text(
+                                                text = res.correctedText,
+                                                modifier = Modifier.padding(8.dp),
+                                                fontSize = 12.sp
+                                            )
+                                        }
+
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text("Raw OCR Text:", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                        Text(text = res.rawOcrText, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                 }
                             }
