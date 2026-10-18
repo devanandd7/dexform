@@ -35,7 +35,6 @@ import androidx.compose.material.icons.outlined.Psychology
 import androidx.compose.material.icons.outlined.SdCard
 import androidx.compose.material.icons.outlined.Security
 import androidx.compose.material.icons.outlined.Send
-import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -170,7 +169,7 @@ fun SettingsScreen(onBack: () -> Unit = {}) {
                                     fontWeight = FontWeight.Bold
                                 )
                                 Text(
-                                    text = "100% On-Device INT4 Multimodal AI Model",
+                                    text = "100% On-Device LiteRT Quantized Model",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -224,7 +223,7 @@ fun SettingsScreen(onBack: () -> Unit = {}) {
                                         fontWeight = FontWeight.SemiBold
                                     )
                                     Text(
-                                        text = "Stored in: app_files/models/gemma-2b-it-cpu-int4.bin",
+                                        text = "Stored in: app_files/models/gemma-4-E2B-it.litertlm",
                                         fontSize = 11.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -371,7 +370,7 @@ fun SettingsScreen(onBack: () -> Unit = {}) {
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text("Analyzing Image (OCR + AI)...")
                             } else {
-                                Icon(Icons.Outlined.TextFields, contentDescription = null)
+                                Icon(Icons.Outlined.AutoAwesome, contentDescription = null)
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text("Select Image for Multimodal Analysis")
                             }

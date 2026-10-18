@@ -26,18 +26,18 @@ class LocalAiManager(private val context: Context) {
 
     private val scope = CoroutineScope(Dispatchers.IO)
     private val modelDir = File(context.filesDir, "models").apply { mkdirs() }
-    val modelFile = File(modelDir, "gemma-2b-it-cpu-int4.bin")
+    val modelFile = File(modelDir, "gemma-4-E2B-it.litertlm")
 
     private val _status = MutableStateFlow<ModelStatus>(ModelStatus.NotDownloaded)
     val status: StateFlow<ModelStatus> = _status.asStateFlow()
 
     private var llmInference: LlmInference? = null
 
-    // Public direct download mirrors (No login / No HF token required for end users)
+    // Exact LiteRT Community Gemma 4 E2B Direct Download Link
     private val publicModelUrls = listOf(
+        "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm",
         "https://huggingface.co/litert-community/Gemma-2b-it-int4-cpu/resolve/main/gemma-2b-it-cpu-int4.bin",
-        "https://raw.githubusercontent.com/google/mediapipe/main/mediapipe/tasks/testdata/genai/gemma-2b-it-cpu-int4.bin",
-        "https://huggingface.co/google/gemma-2b-it-cpu-int4/resolve/main/gemma-2b-it-cpu-int4.bin"
+        "https://raw.githubusercontent.com/google/mediapipe/main/mediapipe/tasks/testdata/genai/gemma-2b-it-cpu-int4.bin"
     )
 
     init {
@@ -119,7 +119,7 @@ class LocalAiManager(private val context: Context) {
             }
 
             if (status == HttpURLConnection.HTTP_UNAUTHORIZED || status == HttpURLConnection.HTTP_FORBIDDEN) {
-                throw IllegalStateException("HTTP $status: Authorization required. Trying public mirror...")
+                throw IllegalStateException("HTTP $status: Authorization required")
             }
 
             if (status != HttpURLConnection.HTTP_OK) {
