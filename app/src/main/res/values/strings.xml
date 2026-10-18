@@ -1,0 +1,99 @@
+<resources>
+    <string name="app_name">DexForm</string>
+
+    <!-- Navigation -->
+    <string name="tab_photos">Photos</string>
+    <string name="tab_albums">Albums</string>
+    <string name="tab_tools">Tools</string>
+    <string name="tab_browser">Browser</string>
+
+    <!-- Photos Screen -->
+    <string name="filter_all">All</string>
+    <string name="filter_photos">Photos</string>
+    <string name="filter_videos">Videos</string>
+    <string name="filter_under_50kb">Under 50 KB</string>
+    <string name="filter_under_200kb">Under 200 KB</string>
+    <string name="filter_over_1mb">Over 1 MB</string>
+    <string name="no_photos">No photos yet</string>
+    <string name="open_browser">Open Browser</string>
+    <string name="permission_partial_banner">Only selected photos are visible.</string>
+    <string name="allow_all">Allow all</string>
+    <string name="permission_denied_title">Allow access to show your photos</string>
+    <string name="grant_permission">Grant Permission</string>
+
+    <!-- Albums Screen -->
+    <string name="form_ready">Form Ready</string>
+
+    <!-- Tools Screen -->
+    <string name="tools_title">Tools</string>
+    <string name="hero_title">Form Ready</string>
+    <string name="hero_subtitle">Make your photo, signature or PDF fit any form requirement</string>
+    <string name="start">Start</string>
+
+    <!-- Tools List -->
+    <string name="tool_compress_title">Compress to KB</string>
+    <string name="tool_compress_desc">Reduce file size to exact KB limit</string>
+    <string name="tool_resize_title">Resize (pixels)</string>
+    <string name="tool_resize_desc">Change width and height dimensions</string>
+    <string name="tool_convert_title">Convert format</string>
+    <string name="tool_convert_desc">Change JPG, PNG, PDF format</string>
+    <string name="tool_increase_size_title">Increase size (min KB)</string>
+    <string name="tool_increase_size_desc">Raise file size to meet minimum KB requirement</string>
+    <string name="tool_img_to_pdf_title">Image to PDF</string>
+    <string name="tool_img_to_pdf_desc">Combine photos into a PDF document</string>
+    <string name="tool_shrink_pdf_title">Shrink PDF</string>
+    <string name="tool_shrink_pdf_desc">Compress PDF file size under limit</string>
+    <string name="tool_pdf_to_img_title">PDF page → image</string>
+    <string name="tool_pdf_to_img_desc">Convert first page of PDF to JPG photo</string>
+    <string name="tool_crop_title">Crop / Rotate</string>
+    <string name="tool_crop_desc">Cut unwanted parts of photo or rotate</string>
+    <string name="tool_file_checker_title">File checker</string>
+    <string name="tool_file_checker_desc">Check exact KB, pixels, format and requirements</string>
+
+    <!-- Presets -->
+    <string name="presets_title">Quick Presets</string>
+    <string name="preset_photo_20kb">Photo up to 20 KB</string>
+    <string name="preset_photo_50kb">Photo up to 50 KB</string>
+    <string name="preset_photo_20_50kb">Photo 20–50 KB</string>
+    <string name="preset_sig_20kb">Signature up to 20 KB</string>
+    <string name="preset_sig_10_20kb">Signature 10–20 KB</string>
+    <string name="preset_pdf_100kb">PDF up to 100 KB</string>
+    <string name="preset_pdf_200kb">PDF up to 200 KB</string>
+    <string name="preset_pdf_500kb">PDF up to 500 KB</string>
+
+    <!-- Tool Controls -->
+    <string name="select_file">Select File</string>
+    <string name="pick_from_gallery">Pick from Gallery</string>
+    <string name="browse_files">Browse Files</string>
+    <string name="convert_button">Convert / Process</string>
+    <string name="processing">Processing...</string>
+    <string name="result_success">File converted successfully</string>
+    <string name="result_meets_limit">Within requirement limit ✓</string>
+    <string name="original_size">Original size</string>
+    <string name="new_size">New size</string>
+    <string name="save_to_gallery">Save to Gallery</string>
+    <string name="saved_to_gallery">Saved to gallery</string>
+    <string name="share">Share</string>
+    <string name="try_again">Try Again</string>
+    <string name="target_kb">Target Max KB</string>
+    <string name="min_kb">Target Min KB</string>
+    <string name="width_px">Width (px)</string>
+    <string name="height_px">Height (px)</string>
+    <string name="fit_mode">Fit Mode</string>
+    <string name="crop_fill">Crop to fill</string>
+    <string name="fit_padding">Fit with white</string>
+    <string name="stretch">Stretch</string>
+
+    <!-- Browser Screen -->
+    <string name="browser_title">Browser</string>
+    <string name="search_or_type_url">Search or type web address</string>
+
+    <!-- Settings Screen -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_language">Language</string>
+    <string name="settings_show_file_info">Show file info on thumbnails</string>
+    <string name="settings_save_to_album">Save converted files to DexForm album</string>
+    <string name="settings_clear_data">Clear browsing data</string>
+    <string name="settings_privacy_note">DexForm processes your files on your phone. Nothing is uploaded except what you choose to submit on a website.</string>
+    <string name="settings_app_version">App version</string>
+</resources>

@@ -1,0 +1,527 @@
+package com.dexform.app.ui.browser
+
+import android.app.DownloadManager
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.Environment
+import android.view.ViewGroup
+import android.webkit.CookieManager
+import android.webkit.SslErrorHandler
+import android.webkit.ValueCallback
+import android.webkit.WebChromeClient
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.widget.Toast
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.ArrowForward
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.Public
+import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.core.content.FileProvider
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.dexform.app.App
+import com.dexform.app.R
+import java.io.File
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun BrowserScreen() {
+    val context = LocalContext.current
+    val app = context.applicationContext as App
+    val viewModel = remember { BrowserViewModel(app.container) }
+
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    val quickLinks by app.container.quickLinkDao.getAll().collectAsState(initial = emptyList())
+
+    var webViewInstance by remember { mutableStateOf<WebView?>(null) }
+    var currentUrl by remember { mutableStateOf("https://duckduckgo.com") }
+    var inputUrl by remember { mutableStateOf("") }
+    var pageProgress by remember { mutableFloatStateOf(0f) }
+    var isLoading by remember { mutableStateOf(false) }
+    var showQuickLinksHome by remember { mutableStateOf(false) }
+    var showPickerOverlay by remember { mutableStateOf(false) }
+    var cameraUri by remember { mutableStateOf<Uri?>(null) }
+    var showMenu by remember { mutableStateOf(false) }
+
+    val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
+        val reqNow = (state as? UploadState.Choosing)?.req
+        if (ok && cameraUri != null && reqNow != null) {
+            viewModel.onFilesPicked(context, listOf(cameraUri!!), reqNow)
+        }
+    }
+
+    val filesLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        val reqNow = (state as? UploadState.Choosing)?.req
+        if (uris.isNotEmpty() && reqNow != null) {
+            viewModel.onFilesPicked(context, uris, reqNow)
+        }
+    }
+
+    fun loadUrl(urlStr: String) {
+        val trimmed = urlStr.trim()
+        val targetUrl = when {
+            trimmed.isBlank() -> "https://duckduckgo.com"
+            !trimmed.contains(" ") && trimmed.contains(".") -> {
+                if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) trimmed else "https://$trimmed"
+            }
+            else -> "https://duckduckgo.com/?q=${Uri.encode(trimmed)}"
+        }
+        showQuickLinksHome = false
+        currentUrl = targetUrl
+        inputUrl = targetUrl
+        webViewInstance?.loadUrl(targetUrl)
+    }
+
+    BackHandler(enabled = state !is UploadState.Idle || showPickerOverlay || webViewInstance?.canGoBack() == true) {
+        when {
+            showPickerOverlay -> showPickerOverlay = false
+            state !is UploadState.Idle -> viewModel.cancel()
+            webViewInstance?.canGoBack() == true -> webViewInstance?.goBack()
+        }
+    }
+
+    Scaffold(
+        topBar = {
+            Surface(
+                color = MaterialTheme.colorScheme.surface,
+                shadowElevation = 2.dp
+            ) {
+                Column {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(42.dp),
+                            shape = RoundedCornerShape(21.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(horizontal = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = if (currentUrl.startsWith("https")) Icons.Outlined.Lock else Icons.Outlined.Public,
+                                    contentDescription = null,
+                                    tint = if (currentUrl.startsWith("https")) Color(0xFF16A34A) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+
+                                BasicTextField(
+                                    value = inputUrl,
+                                    onValueChange = { inputUrl = it },
+                                    singleLine = true,
+                                    textStyle = MaterialTheme.typography.bodyMedium.copy(
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    ),
+                                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
+                                    keyboardActions = KeyboardActions(onGo = { loadUrl(inputUrl) }),
+                                    modifier = Modifier.weight(1f),
+                                    decorationBox = @Composable { innerTextField ->
+                                        Box(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            contentAlignment = Alignment.CenterStart
+                                        ) {
+                                            if (inputUrl.isEmpty()) {
+                                                Text(
+                                                    text = stringResource(R.string.search_or_type_url),
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+                                            innerTextField()
+                                        }
+                                    }
+                                )
+
+                                if (isLoading) {
+                                    IconButton(
+                                        onClick = { webViewInstance?.stopLoading() },
+                                        modifier = Modifier.size(28.dp)
+                                    ) {
+                                        Icon(Icons.Outlined.Close, contentDescription = "Stop", modifier = Modifier.size(18.dp))
+                                    }
+                                } else {
+                                    IconButton(
+                                        onClick = { webViewInstance?.reload() },
+                                        modifier = Modifier.size(28.dp)
+                                    ) {
+                                        Icon(Icons.Outlined.Refresh, contentDescription = "Reload", modifier = Modifier.size(18.dp))
+                                    }
+                                }
+                            }
+                        }
+
+                        IconButton(onClick = { showMenu = !showMenu }) {
+                            Icon(Icons.Outlined.MoreVert, contentDescription = "Menu")
+                        }
+
+                        DropdownMenu(
+                            expanded = showMenu,
+                            onDismissRequest = { showMenu = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Open Test Page") },
+                                onClick = {
+                                    showMenu = false
+                                    val testHtml = """
+                                        <!DOCTYPE html>
+                                        <html>
+                                        <head><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>DexForm Test Page</title></head>
+                                        <body style="font-family:sans-serif; padding:16px;">
+                                        <h2>DexForm Browser Test Page</h2>
+                                        <h3>1. Plain accept</h3>
+                                        <input type="file" accept="image/jpeg">
+                                        <h3>2. Label hint</h3>
+                                        <label for="p">Upload Photo (max 20 KB, JPG)</label><br>
+                                        <input id="p" type="file">
+                                        <h3>3. Hidden input + styled button</h3>
+                                        <div>Signature: 10 KB to 20 KB, 140 x 60 pixels<br>
+                                          <button onclick="document.getElementById('s').click()" style="padding:10px 16px; background:#2563EB; color:white; border:none; border-radius:6px; margin-top:6px;">Choose Signature</button>
+                                          <input id="s" type="file" style="display:none"></div>
+                                        <h3>4. PDF only, multiple</h3>
+                                        <div>Documents (PDF, not more than 200 KB)</div>
+                                        <input type="file" accept="application/pdf" multiple>
+                                        </body>
+                                        </html>
+                                    """.trimIndent()
+                                    showQuickLinksHome = false
+                                    webViewInstance?.loadDataWithBaseURL("https://test.dexform.local/", testHtml, "text/html", "utf-8", null)
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Share Link") },
+                                onClick = {
+                                    showMenu = false
+                                    val intent = Intent(Intent.ACTION_SEND).apply {
+                                        type = "text/plain"
+                                        putExtra(Intent.EXTRA_TEXT, currentUrl)
+                                    }
+                                    context.startActivity(Intent.createChooser(intent, "Share Link"))
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Clear Browsing Data") },
+                                onClick = {
+                                    showMenu = false
+                                    webViewInstance?.clearCache(true)
+                                    webViewInstance?.clearHistory()
+                                    CookieManager.getInstance().removeAllCookies(null)
+                                    Toast.makeText(context, "Browsing data cleared", Toast.LENGTH_SHORT).show()
+                                }
+                            )
+                        }
+                    }
+
+                    if (isLoading && pageProgress < 1f) {
+                        LinearProgressIndicator(
+                            progress = pageProgress,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+            }
+        },
+        bottomBar = {
+            Surface(
+                color = MaterialTheme.colorScheme.surface,
+                shadowElevation = 8.dp
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceAround,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(
+                        onClick = { webViewInstance?.goBack() },
+                        enabled = webViewInstance?.canGoBack() == true
+                    ) {
+                        Icon(Icons.Outlined.ArrowBack, contentDescription = "Back")
+                    }
+                    IconButton(
+                        onClick = { webViewInstance?.goForward() },
+                        enabled = webViewInstance?.canGoForward() == true
+                    ) {
+                        Icon(Icons.Outlined.ArrowForward, contentDescription = "Forward")
+                    }
+                    IconButton(onClick = {
+                        showQuickLinksHome = true
+                    }) {
+                        Icon(Icons.Outlined.Home, contentDescription = "Home")
+                    }
+                    IconButton(onClick = {
+                        val intent = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_TEXT, currentUrl)
+                        }
+                        context.startActivity(Intent.createChooser(intent, "Share"))
+                    }) {
+                        Icon(Icons.Outlined.Share, contentDescription = "Share")
+                    }
+                }
+            }
+        }
+    ) { innerPadding ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+        ) {
+            // WebView Host
+            AndroidView(
+                modifier = Modifier.fillMaxSize(),
+                factory = { ctx ->
+                    WebView(ctx).apply {
+                        layoutParams = ViewGroup.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT
+                        )
+                        settings.apply {
+                            javaScriptEnabled = true
+                            domStorageEnabled = true
+                            setSupportMultipleWindows(false)
+                            allowFileAccess = false
+                            allowContentAccess = true
+                            mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+                            safeBrowsingEnabled = true
+                        }
+                        CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+
+                        webViewClient = object : WebViewClient() {
+                            override fun onPageFinished(view: WebView, url: String?) {
+                                view.evaluateJavascript(UPLOAD_HOOK_JS, null)
+                                url?.let {
+                                    currentUrl = it
+                                    inputUrl = it
+                                }
+                                isLoading = false
+                            }
+
+                            override fun onReceivedSslError(
+                                view: WebView,
+                                handler: SslErrorHandler,
+                                error: android.net.http.SslError
+                            ) {
+                                handler.cancel() // Never proceed on SSL error
+                                Toast.makeText(ctx, "SSL Connection Blocked for Security", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+
+                        webChromeClient = object : WebChromeClient() {
+                            override fun onProgressChanged(view: WebView, newProgress: Int) {
+                                pageProgress = newProgress / 100f
+                                isLoading = newProgress < 100
+                            }
+
+                            override fun onShowFileChooser(
+                                view: WebView,
+                                filePathCallback: ValueCallback<Array<Uri>>,
+                                fileChooserParams: FileChooserParams
+                            ): Boolean {
+                                viewModel.attachChooser(
+                                    callback = filePathCallback,
+                                    accept = fileChooserParams.acceptTypes.joinToString(","),
+                                    multiple = fileChooserParams.mode == FileChooserParams.MODE_OPEN_MULTIPLE,
+                                    host = Uri.parse(view.url ?: "").host ?: ""
+                                )
+                                view.evaluateJavascript("JSON.stringify(window.__dexform && window.__dexform.last)") { raw ->
+                                    viewModel.onHints(raw)
+                                }
+                                return true
+                            }
+                        }
+
+                        setDownloadListener { url, userAgent, contentDisposition, mimetype, _ ->
+                            if (url.startsWith("http")) {
+                                try {
+                                    val request = DownloadManager.Request(Uri.parse(url)).apply {
+                                        setMimeType(mimetype)
+                                        addRequestHeader("User-Agent", userAgent)
+                                        addRequestHeader("Cookie", CookieManager.getInstance().getCookie(url))
+                                        setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                                        setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "DexForm_${System.currentTimeMillis()}")
+                                    }
+                                    val dm = ctx.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+                                    dm.enqueue(request)
+                                    Toast.makeText(ctx, "Download Started", Toast.LENGTH_SHORT).show()
+                                } catch (e: Exception) {
+                                    Toast.makeText(ctx, "Download failed", Toast.LENGTH_SHORT).show()
+                                }
+                            } else {
+                                Toast.makeText(ctx, "This download type isn't supported yet", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+
+                        webViewInstance = this
+                        loadUrl("https://duckduckgo.com")
+                    }
+                }
+            )
+
+            // Quick Links Home Overlay
+            if (showQuickLinksHome) {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(20.dp)
+                    ) {
+                        Text("Browser Home", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        if (quickLinks.isEmpty()) {
+                            Text("No saved quick links. Type a web address above to search or navigate.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        } else {
+                            LazyVerticalGrid(
+                                columns = GridCells.Fixed(3),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                items(quickLinks) { link ->
+                                    Card(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable { loadUrl(link.url) },
+                                        shape = RoundedCornerShape(12.dp),
+                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                                    ) {
+                                        Column(
+                                            modifier = Modifier.padding(16.dp),
+                                            horizontalAlignment = Alignment.CenterHorizontally
+                                        ) {
+                                            Icon(Icons.Outlined.Public, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                            Spacer(modifier = Modifier.height(8.dp))
+                                            Text(link.title, fontWeight = FontWeight.Medium, maxLines = 1)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Upload State Overlays
+            when (val s = state) {
+                is UploadState.Choosing -> UploadSheet(
+                    req = s.req,
+                    needsManual = s.needsManual,
+                    onEditRequirement = viewModel::updateRequirement,
+                    onGallery = { showPickerOverlay = true },
+                    onCamera = {
+                        val camDir = File(context.cacheDir, "camera").apply { mkdirs() }
+                        val file = File(camDir, "shot_${System.currentTimeMillis()}.jpg")
+                        cameraUri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+                        cameraLauncher.launch(cameraUri!!)
+                    },
+                    onFiles = { filesLauncher.launch(arrayOf("image/*", "application/pdf")) },
+                    onDismiss = viewModel::cancel
+                )
+                is UploadState.Processing -> ProcessingDialog(s.message)
+                is UploadState.Preview -> PreviewDialog(
+                    items = s.items,
+                    req = s.req,
+                    onUse = viewModel::confirm,
+                    onCancel = viewModel::cancel
+                )
+                is UploadState.Error -> ErrorDialog(s.message, onCancel = viewModel::cancel)
+                UploadState.Idle -> Unit
+            }
+
+            // Gallery Pick Mode Dialog Overlay
+            if (showPickerOverlay) {
+                val req = (state as? UploadState.Choosing)?.req
+                Dialog(
+                    onDismissRequest = { showPickerOverlay = false },
+                    properties = DialogProperties(usePlatformDefaultWidth = false)
+                ) {
+                    GalleryPickMode(
+                        requirement = req,
+                        multiple = (state as? UploadState.Choosing)?.multiple == true,
+                        onDone = { uris ->
+                            showPickerOverlay = false
+                            if (req != null) viewModel.onFilesPicked(context, uris, req)
+                        },
+                        onClose = { showPickerOverlay = false }
+                    )
+                }
+            }
+        }
+    }
+}

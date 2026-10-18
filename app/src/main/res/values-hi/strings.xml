@@ -1,0 +1,99 @@
+<resources>
+    <string name="app_name">DexForm</string>
+
+    <!-- Navigation -->
+    <string name="tab_photos">फ़ोटो</string>
+    <string name="tab_albums">एल्बम</string>
+    <string name="tab_tools">टूल्स</string>
+    <string name="tab_browser">ब्राउज़र</string>
+
+    <!-- Photos Screen -->
+    <string name="filter_all">सभी</string>
+    <string name="filter_photos">फ़ोटो</string>
+    <string name="filter_videos">वीडियो</string>
+    <string name="filter_under_50kb">50 KB से कम</string>
+    <string name="filter_under_200kb">200 KB से कम</string>
+    <string name="filter_over_1mb">1 MB से अधिक</string>
+    <string name="no_photos">अभी कोई फ़ोटो नहीं है</string>
+    <string name="open_browser">ब्राउज़र खोलें</string>
+    <string name="permission_partial_banner">केवल चुनिंदा फ़ोटो ही दृश्यमान हैं।</string>
+    <string name="allow_all">सभी की अनुमति दें</string>
+    <string name="permission_denied_title">अपनी फ़ोटो दिखाने के लिए अनुमति दें</string>
+    <string name="grant_permission">अनुमति दें</string>
+
+    <!-- Albums Screen -->
+    <string name="form_ready">फॉर्म रेडी</string>
+
+    <!-- Tools Screen -->
+    <string name="tools_title">टूल्स</string>
+    <string name="hero_title">फॉर्म रेडी</string>
+    <string name="hero_subtitle">अपनी फ़ोटो, हस्ताक्षर या PDF को किसी भी फॉर्म की आवश्यकता के अनुसार बनाएं</string>
+    <string name="start">शुरू करें</string>
+
+    <!-- Tools List -->
+    <string name="tool_compress_title">KB में कंप्रेस करें</string>
+    <string name="tool_compress_desc">फ़ाइल का आकार exact KB सीमा तक घटाएं</string>
+    <string name="tool_resize_title">आकार बदलें (पिक्सेल)</string>
+    <string name="tool_resize_desc">चौड़ाई और ऊंचाई पिक्सेल बदलें</string>
+    <string name="tool_convert_title">फॉर्मेट बदलें</string>
+    <string name="tool_convert_desc">JPG, PNG, PDF फॉर्मेट में बदलें</string>
+    <string name="tool_increase_size_title">आकार बढ़ाएं (न्यूनतम KB)</string>
+    <string name="tool_increase_size_desc">न्यूनतम KB आवश्यकता को पूरा करने के लिए फ़ाइल का आकार बढ़ाएं</string>
+    <string name="tool_img_to_pdf_title">इमेज से PDF</string>
+    <string name="tool_img_to_pdf_desc">फ़ोटो को PDF दस्तावेज़ में जोड़ें</string>
+    <string name="tool_shrink_pdf_title">PDF का आकार घटाएं</string>
+    <string name="tool_shrink_pdf_desc">PDF फ़ाइल का आकार सीमा के तहत कम करें</string>
+    <string name="tool_pdf_to_img_title">PDF पेज → इमेज</string>
+    <string name="tool_pdf_to_img_desc">PDF के पहले पेज को JPG फ़ोटो में बदलें</string>
+    <string name="tool_crop_title">क्रॉप / घुमाएं</string>
+    <string name="tool_crop_desc">फ़ोटो का अवांछित हिस्सा काटें या घुमाएं</string>
+    <string name="tool_file_checker_title">फ़ाइल चेकर</string>
+    <string name="tool_file_checker_desc">सटीक KB, पिक्सेल, फॉर्मेट और आवश्यकताएं जांचें</string>
+
+    <!-- Presets -->
+    <string name="presets_title">त्वरित प्रिसिट</string>
+    <string name="preset_photo_20kb">फ़ोटो 20 KB तक</string>
+    <string name="preset_photo_50kb">फ़ोटो 50 KB तक</string>
+    <string name="preset_photo_20_50kb">फ़ोटो 20–50 KB</string>
+    <string name="preset_sig_20kb">हस्ताक्षर 20 KB तक</string>
+    <string name="preset_sig_10_20kb">हस्ताक्षर 10–20 KB</string>
+    <string name="preset_pdf_100kb">PDF 100 KB तक</string>
+    <string name="preset_pdf_200kb">PDF 200 KB तक</string>
+    <string name="preset_pdf_500kb">PDF 500 KB तक</string>
+
+    <!-- Tool Controls -->
+    <string name="select_file">फ़ाइल चुनें</string>
+    <string name="pick_from_gallery">गैलरी से चुनें</string>
+    <string name="browse_files">फ़ाइलें ब्राउज़ करें</string>
+    <string name="convert_button">कन्वर्ट / प्रोसेस करें</string>
+    <string name="processing">प्रोसेस हो रहा है...</string>
+    <string name="result_success">फ़ाइल सफलतापूर्वक परिवर्तित की गई</string>
+    <string name="result_meets_limit">आवश्यकता सीमा के भीतर ✓</string>
+    <string name="original_size">मूल आकार</string>
+    <string name="new_size">नया आकार</string>
+    <string name="save_to_gallery">गैलरी में सहेजें</string>
+    <string name="saved_to_gallery">गैलरी में सहेजा गया</string>
+    <string name="share">शेयर करें</string>
+    <string name="try_again">पुनः प्रयास करें</string>
+    <string name="target_kb">लक्ष्य अधिकतम KB</string>
+    <string name="min_kb">लक्ष्य न्यूनतम KB</string>
+    <string name="width_px">चौड़ाई (px)</string>
+    <string name="height_px">ऊंचाई (px)</string>
+    <string name="fit_mode">फिट मोड</string>
+    <string name="crop_fill">भरने के लिए क्रॉप करें</string>
+    <string name="fit_padding">सफेद मार्जिन के साथ फिट करें</string>
+    <string name="stretch">स्ट्रेच करें</string>
+
+    <!-- Browser Screen -->
+    <string name="browser_title">ब्राउज़र</string>
+    <string name="search_or_type_url">खोजें या वेब पता लिखें</string>
+
+    <!-- Settings Screen -->
+    <string name="settings_title">सेटिंग्स</string>
+    <string name="settings_language">भाषा</string>
+    <string name="settings_show_file_info">थंबनेल पर फ़ाइल जानकारी दिखाएं</string>
+    <string name="settings_save_to_album">बदली हुई फ़ाइलों को DexForm एल्बम में सहेजें</string>
+    <string name="settings_clear_data">ब्राउज़िंग डेटा साफ़ करें</string>
+    <string name="settings_privacy_note">DexForm आपकी फ़ाइलों को आपके फोन पर ही प्रोसेस करता है। जब तक आप किसी वेबसाइट पर सबमिट न करें, कुछ भी अपलोड नहीं होता है।</string>
+    <string name="settings_app_version">ऐप संस्करण</string>
+</resources>
