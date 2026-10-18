@@ -18,6 +18,8 @@ webkit = "1.8.0"
 cropper = "4.5.0"
 junit = "4.13.2"
 espresso = "3.5.1"
+mlkitTextRecognition = "16.0.0"
+mediapipeGenai = "0.10.14"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
@@ -54,6 +56,9 @@ datastore-preferences = { module = "androidx.datastore:datastore-preferences", v
 webkit = { module = "androidx.webkit:webkit", version.ref = "webkit" }
 
 image-cropper = { module = "com.vanniktech:android-image-cropper", version.ref = "cropper" }
+
+mlkit-text-recognition = { module = "com.google.mlkit:text-recognition", version.ref = "mlkitTextRecognition" }
+mediapipe-tasks-genai = { module = "com.google.mediapipe:tasks-genai", version.ref = "mediapipeGenai" }
 
 junit = { module = "junit:junit", version.ref = "junit" }
 androidx-test-ext = { module = "androidx.test.ext:junit", version = "1.1.5" }
