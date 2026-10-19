@@ -46,21 +46,17 @@ object ProfileExtractorEngine {
 
         val extractionPrompt = buildString {
             appendLine("Extract Indian identity and academic document details accurately:")
-            appendLine("\nFormat strictly as Markdown summary, followed by a JSON block:")
-            appendLine("- **Document:** <PAN Card, Aadhaar, 10th Marksheet, 12th Marksheet>")
+            appendLine("- **Document:** <PAN Card / Aadhaar Card / 10th Marksheet / 12th Marksheet>")
             appendLine("- **Name:** <Candidate Full Name>")
             appendLine("- **Father's Name:** <Father's Name>")
             appendLine("- **Mother's Name:** <Mother's Name>")
             appendLine("- **DOB:** <DD/MM/YYYY>")
-            appendLine("- **ID Number:** <PAN or Aadhaar Number>")
-            appendLine("```json")
-            appendLine("{\"doc_type\":\"PAN_CARD\",\"name\":\"\",\"father_name\":\"\",\"mother_name\":\"\",\"dob\":\"\",\"id_number\":\"\",\"tenth_roll_no\":\"\",\"tenth_reg_no\":\"\",\"tenth_passing_year\":\"\",\"twelfth_roll_no\":\"\",\"twelfth_reg_no\":\"\",\"twelfth_passing_year\":\"\"}")
-            appendLine("```")
+            appendLine("- **ID Number:** <ID Number>")
         }
 
         val aiResponse = if (!useOcr && imageUris.isNotEmpty()) {
             // ==========================================
-            // DIRECT VISION FLOW (Edge Gallery Architecture - 10x Super-Fast Speed)
+            // DIRECT VISION FLOW (Edge Gallery Architecture - Super-Fast Speed)
             // ==========================================
             onStepUpdate("⚡ Stage 1/2: Direct Vision Flow (Bypassing OCR for Edge Gallery Speed)...")
             try {
@@ -77,7 +73,7 @@ object ProfileExtractorEngine {
                         bitmap = bitmap,
                         prompt = extractionPrompt,
                         enableThinking = false,
-                        temperature = 0.1f, // Greedy decoding for ultra-fast response
+                        temperature = 0.0f, // Pure greedy decoding: fastest possible token generation
                         topK = 1,
                         onTokenStream = { partialAnswer, _ ->
                             onTokenStream?.invoke(partialAnswer)
@@ -91,7 +87,7 @@ object ProfileExtractorEngine {
                 localAiManager.generateResponse(
                     prompt = extractionPrompt,
                     enableThinking = false,
-                    temperature = 0.1f,
+                    temperature = 0.0f,
                     topK = 1,
                     onTokenStream = { partialAnswer, _ ->
                         onTokenStream?.invoke(partialAnswer)
