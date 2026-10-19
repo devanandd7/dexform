@@ -140,7 +140,7 @@ fun AiChatScreen(
     var temperature by remember { mutableStateOf(0.8f) }
     var topK by remember { mutableStateOf(40) }
     var topP by remember { mutableStateOf(0.95f) }
-    var systemPrompt by remember { mutableStateOf("You are DexForm AI, an intelligent assistant. Provide direct, clean, and concise responses.") }
+    var systemPrompt by remember { mutableStateOf("") }
     var maxTokens by remember { mutableStateOf(2048) }
     var showConfigSheet by remember { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -199,6 +199,11 @@ fun AiChatScreen(
             return
         }
         if (selectedImages.isEmpty() && userPromptText.isBlank()) return
+
+        // Abort previous running job if active so it never leaks into background
+        if (isProcessing || currentGenerationJob?.isActive == true) {
+            handleStop()
+        }
 
         val imagesToProcess = selectedImages.toList()
         val textPrompt = userPromptText.trim()
@@ -1063,6 +1068,7 @@ fun AiChatScreen(
                         }
                         OutlinedButton(
                             onClick = {
+                                handleStop() // Instantly kills any active background generation session
                                 chatMessages.clear()
                                 chatMessages.add(initialWelcomeMessage)
                                 showConfigSheet = false

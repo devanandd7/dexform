@@ -16,6 +16,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
@@ -34,6 +36,7 @@ sealed interface ModelStatus {
 class LocalAiManager(private val context: Context) {
 
     private val scope = CoroutineScope(Dispatchers.IO)
+    private val inferenceMutex = Mutex()
     private val modelDir = File(context.filesDir, "models").apply { mkdirs() }
     val modelFile = File(modelDir, "gemma-4-E2B-it.litertlm")
 
@@ -390,25 +393,20 @@ class LocalAiManager(private val context: Context) {
     }
 
     fun formatPrompt(userPrompt: String, systemPrompt: String?, enableThinking: Boolean): String {
-        val sysDirective = buildString {
-            if (!systemPrompt.isNullOrBlank()) {
-                append(systemPrompt.trim())
-                append(" ")
-            }
-            if (!enableThinking) {
-                append("Direct response only. Do not output thoughts, thinking process, reasoning steps, or internal deliberation. Answer immediately.")
-            } else {
-                append("You may think step-by-step before answering.")
-            }
+        val sysDirective = systemPrompt?.trim()?.takeIf { it.isNotBlank() }
+        return if (sysDirective != null) {
+            "<start_of_turn>user\n$sysDirective\n\n$userPrompt<end_of_turn>\n<start_of_turn>model\n"
+        } else {
+            "<start_of_turn>user\n$userPrompt<end_of_turn>\n<start_of_turn>model\n"
         }
-
-        return "<start_of_turn>user\n$sysDirective\n\n$userPrompt<end_of_turn>\n<start_of_turn>model\n"
     }
 
     fun stopCurrentGeneration() {
         try {
             Log.d("LocalAiManager", "Stopping active AI generation...")
             activeSession?.cancelGenerateResponseAsync()
+            activeSession?.close()
+            activeSession = null
         } catch (e: Throwable) {
             Log.w("LocalAiManager", "cancelGenerateResponseAsync error: ${e.message}")
         }
@@ -422,49 +420,15 @@ class LocalAiManager(private val context: Context) {
         topK: Int = 40,
         topP: Float = 0.95f,
         onTokenStream: ((String, String?) -> Unit)? = null
-    ): Pair<String, String?> = withContext(Dispatchers.Default) {
-        val inference = llmInference
-            ?: throw IllegalStateException("AI Model is not loaded into RAM. Please tap 'Load to RAM' at the top to initialize.")
+    ): Pair<String, String?> = inferenceMutex.withLock {
+        withContext(Dispatchers.Default) {
+            val inference = llmInference
+                ?: throw IllegalStateException("AI Model is not loaded into RAM. Please tap 'Load to RAM' at the top to initialize.")
 
-        val formattedPrompt = formatPrompt(prompt, systemPrompt, enableThinking)
-
-        // 1. Direct Asynchronous Real-Time Token Streaming (Fastest & matching Edge Gallery)
-        if (onTokenStream != null) {
+            val formattedPrompt = formatPrompt(prompt, systemPrompt, enableThinking)
             val deferred = CompletableDeferred<Pair<String, String?>>()
             val sb = StringBuilder()
-            try {
-                val progressListener = ProgressListener<String> { partial, done ->
-                    if (!partial.isNullOrEmpty()) {
-                        sb.append(partial)
-                        val currentStr = sb.toString()
-                        val (cleanedText, thinking) = cleanResponse(currentStr, enableThinking)
-                        onTokenStream(cleanedText, thinking)
 
-                        // Early stop if model hits end markers
-                        val stopSequences = listOf("<end_of_turn>", "<start_of_turn>", "<eos>", "\nturn>", "</end")
-                        if (stopSequences.any { currentStr.contains(it) }) {
-                            if (!deferred.isCompleted) {
-                                deferred.complete(Pair(cleanedText, thinking))
-                            }
-                            return@ProgressListener
-                        }
-                    }
-                    if (done && !deferred.isCompleted) {
-                        val result = cleanResponse(sb.toString(), enableThinking)
-                        deferred.complete(result)
-                    }
-                }
-                inference.generateResponseAsync(formattedPrompt, progressListener)
-                val finalResult = withTimeoutOrNull(90_000) { deferred.await() }
-                if (finalResult != null) return@withContext finalResult
-                return@withContext cleanResponse(sb.toString(), enableThinking)
-            } catch (streamErr: Throwable) {
-                Log.w("LocalAiManager", "Async streaming listener error: ${streamErr.message}, falling back to session")
-            }
-        }
-
-        // 2. Try LlmInferenceSession for advanced sampling parameters (temperature, topK, topP)
-        try {
             val sessionOptions = LlmInferenceSession.LlmInferenceSessionOptions.builder()
                 .setTemperature(temperature.coerceIn(0.0f, 2.0f))
                 .setTopK(topK.coerceIn(1, 40))
@@ -473,57 +437,49 @@ class LocalAiManager(private val context: Context) {
 
             val session = LlmInferenceSession.createFromOptions(inference, sessionOptions)
             activeSession = session
-            if (session != null) {
-                try {
-                    session.addQueryChunk(formattedPrompt)
-                    if (onTokenStream != null) {
-                        val deferred = CompletableDeferred<Pair<String, String?>>()
-                        val sb = StringBuilder()
-                        val listener = ProgressListener<String> { partial, done ->
-                            if (!partial.isNullOrEmpty()) {
-                                sb.append(partial)
-                                val currentStr = sb.toString()
-                                val (cleanedText, thinking) = cleanResponse(currentStr, enableThinking)
-                                onTokenStream(cleanedText, thinking)
 
-                                val stopSequences = listOf("<end_of_turn>", "<start_of_turn>", "<eos>", "\nturn>", "</end")
-                                if (stopSequences.any { currentStr.contains(it) }) {
-                                    if (!deferred.isCompleted) {
-                                        deferred.complete(Pair(cleanedText, thinking))
-                                    }
-                                    try { session.cancelGenerateResponseAsync() } catch (_: Throwable) {}
-                                    return@ProgressListener
+            try {
+                session.addQueryChunk(formattedPrompt)
+
+                if (onTokenStream != null) {
+                    val listener = ProgressListener<String> { partial, done ->
+                        if (!partial.isNullOrEmpty()) {
+                            sb.append(partial)
+                            val currentStr = sb.toString()
+                            val (cleanedText, thinking) = cleanResponse(currentStr, enableThinking)
+                            onTokenStream(cleanedText, thinking)
+
+                            val stopSequences = listOf("<end_of_turn>", "<start_of_turn>", "<eos>", "\nturn>", "</end")
+                            if (stopSequences.any { currentStr.contains(it) }) {
+                                if (!deferred.isCompleted) {
+                                    deferred.complete(Pair(cleanedText, thinking))
                                 }
-                            }
-                            if (done && !deferred.isCompleted) {
-                                deferred.complete(cleanResponse(sb.toString(), enableThinking))
+                                try { session.cancelGenerateResponseAsync() } catch (_: Throwable) {}
+                                return@ProgressListener
                             }
                         }
-                        session.generateResponseAsync(listener)
-                        val res = withTimeoutOrNull(90_000) { deferred.await() }
-                        if (res != null) return@withContext res
-                    } else {
-                        val res = session.generateResponse()
-                        if (res != null) {
-                            val result = cleanResponse(res, enableThinking)
-                            onTokenStream?.invoke(result.first, result.second)
-                            return@withContext result
+                        if (done && !deferred.isCompleted) {
+                            deferred.complete(cleanResponse(sb.toString(), enableThinking))
                         }
                     }
-                } finally {
-                    try { session.close() } catch (_: Throwable) {}
+
+                    session.generateResponseAsync(listener)
+                    val res = withTimeoutOrNull(90_000) { deferred.await() }
+                    if (res != null) return@withContext res
+                    return@withContext cleanResponse(sb.toString(), enableThinking)
+                } else {
+                    val res = session.generateResponse()
+                    val result = cleanResponse(res ?: "", enableThinking)
+                    return@withContext result
+                }
+            } finally {
+                try { session.cancelGenerateResponseAsync() } catch (_: Throwable) {}
+                try { session.close() } catch (_: Throwable) {}
+                if (activeSession === session) {
                     activeSession = null
                 }
             }
-        } catch (sessionErr: Throwable) {
-            Log.d("LocalAiManager", "LlmInferenceSession skipped (${sessionErr.message}), using direct inference")
         }
-
-        // 3. Fallback to direct synchronous inference
-        val res = inference.generateResponse(formattedPrompt)
-        val result = cleanResponse(res, enableThinking)
-        onTokenStream?.invoke(result.first, result.second)
-        return@withContext result
     }
 
     suspend fun generateResponse(prompt: String): String = withContext(Dispatchers.Default) {
@@ -543,15 +499,15 @@ class LocalAiManager(private val context: Context) {
         topK: Int = 1,
         topP: Float = 0.95f,
         onTokenStream: ((String, String?) -> Unit)? = null
-    ): Pair<String, String?> = withContext(Dispatchers.Default) {
-        val inference = llmInference
-            ?: throw IllegalStateException("AI Model is not loaded into RAM. Please tap 'Load to RAM' at the top.")
+    ): Pair<String, String?> = inferenceMutex.withLock {
+        withContext(Dispatchers.Default) {
+            val inference = llmInference
+                ?: throw IllegalStateException("AI Model is not loaded into RAM. Please tap 'Load to RAM' at the top.")
 
-        val formattedPrompt = formatPrompt(prompt, systemPrompt, enableThinking)
-        val deferred = CompletableDeferred<Pair<String, String?>>()
-        val sb = StringBuilder()
+            val formattedPrompt = formatPrompt(prompt, systemPrompt, enableThinking)
+            val deferred = CompletableDeferred<Pair<String, String?>>()
+            val sb = StringBuilder()
 
-        try {
             val sessionOptionsBuilder = LlmInferenceSession.LlmInferenceSessionOptions.builder()
                 .setTemperature(temperature.coerceIn(0.0f, 2.0f))
                 .setTopK(topK.coerceIn(1, 40))
@@ -568,44 +524,46 @@ class LocalAiManager(private val context: Context) {
             val session = LlmInferenceSession.createFromOptions(inference, sessionOptionsBuilder.build())
             activeSession = session
 
-            // Scale to max 1024 to keep GPU memory light and fast (Edge Gallery standard)
-            val scaledBitmap = scaleBitmapToMaxDimension(bitmap, 1024)
+            try {
+                // Scale to max 1024 to keep GPU memory light and fast (Edge Gallery standard)
+                val scaledBitmap = scaleBitmapToMaxDimension(bitmap, 1024)
 
-            // Connect native Edge Gallery vision flow via dynamic reflection
-            tryAddImageToSession(session, scaledBitmap)
-            session.addQueryChunk(formattedPrompt)
+                // Connect native Edge Gallery vision flow via dynamic reflection
+                tryAddImageToSession(session, scaledBitmap)
+                session.addQueryChunk(formattedPrompt)
 
-            val listener = ProgressListener<String> { partial, done ->
-                if (!partial.isNullOrEmpty()) {
-                    sb.append(partial)
-                    val currentStr = sb.toString()
-                    val (cleanedText, thinking) = cleanResponse(currentStr, enableThinking)
-                    onTokenStream?.invoke(cleanedText, thinking)
+                val listener = ProgressListener<String> { partial, done ->
+                    if (!partial.isNullOrEmpty()) {
+                        sb.append(partial)
+                        val currentStr = sb.toString()
+                        val (cleanedText, thinking) = cleanResponse(currentStr, enableThinking)
+                        onTokenStream?.invoke(cleanedText, thinking)
 
-                    val stopSequences = listOf("<end_of_turn>", "<start_of_turn>", "<eos>", "\nturn>", "</end")
-                    if (stopSequences.any { currentStr.contains(it) }) {
-                        if (!deferred.isCompleted) {
-                            deferred.complete(Pair(cleanedText, thinking))
+                        val stopSequences = listOf("<end_of_turn>", "<start_of_turn>", "<eos>", "\nturn>", "</end")
+                        if (stopSequences.any { currentStr.contains(it) }) {
+                            if (!deferred.isCompleted) {
+                                deferred.complete(Pair(cleanedText, thinking))
+                            }
+                            try { session.cancelGenerateResponseAsync() } catch (_: Throwable) {}
+                            return@ProgressListener
                         }
-                        try { session.cancelGenerateResponseAsync() } catch (_: Throwable) {}
-                        return@ProgressListener
+                    }
+                    if (done && !deferred.isCompleted) {
+                        deferred.complete(cleanResponse(sb.toString(), enableThinking))
                     }
                 }
-                if (done && !deferred.isCompleted) {
-                    deferred.complete(cleanResponse(sb.toString(), enableThinking))
+
+                session.generateResponseAsync(listener)
+                val res = withTimeoutOrNull(90_000) { deferred.await() }
+                if (res != null) return@withContext res
+                return@withContext cleanResponse(sb.toString(), enableThinking)
+            } finally {
+                try { session.cancelGenerateResponseAsync() } catch (_: Throwable) {}
+                try { session.close() } catch (_: Throwable) {}
+                if (activeSession === session) {
+                    activeSession = null
                 }
             }
-
-            session.generateResponseAsync(listener)
-            val res = withTimeoutOrNull(90_000) { deferred.await() }
-            if (res != null) return@withContext res
-            return@withContext cleanResponse(sb.toString(), enableThinking)
-        } catch (visionErr: Throwable) {
-            Log.w("LocalAiManager", "Direct vision session failed (${visionErr.message}), falling back to text prompt", visionErr)
-            return@withContext generateResponse(prompt, enableThinking, systemPrompt, temperature, topK, topP, onTokenStream)
-        } finally {
-            try { activeSession?.close() } catch (_: Throwable) {}
-            activeSession = null
         }
     }
 
