@@ -3,6 +3,7 @@ package com.dexform.app.ui.profile
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import com.dexform.app.R
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -93,11 +94,14 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import coil.compose.AsyncImage
 import com.dexform.app.App
-import com.dexform.app.R
+import com.dexform.app.core.ai.BioExtractionParser
+import com.dexform.app.core.ai.DocumentProposal
 import com.dexform.app.core.ai.GenerationChunk
 import com.dexform.app.core.ai.ImageAiHelper
 import com.dexform.app.core.ai.LocalAiManager
 import com.dexform.app.core.ai.ModelState
+import com.dexform.app.core.ai.SaveToBioEngine
+import com.dexform.app.data.db.Tier
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.io.File
@@ -110,7 +114,10 @@ data class ChatItem(
     val isStreaming: Boolean = false,
     val backend: String = "GPU",
     val isDivider: Boolean = false,
-    val dividerText: String? = null
+    val dividerText: String? = null,
+    val proposal: DocumentProposal? = null,
+    val isSavedToBio: Boolean = false,
+    val isSavingToBio: Boolean = false
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -548,6 +555,74 @@ fun AiChatScreen(
                                         textColor = modelTextColor
                                     )
 
+                                    // Interactive Bio / Document Proposal Card
+                                    if (!message.isStreaming && message.proposal != null && message.proposal.fields.isNotEmpty()) {
+                                        Spacer(modifier = Modifier.height(10.dp))
+                                        DocumentProposalCard(
+                                            proposal = message.proposal,
+                                            isDark = isDark,
+                                            isSaved = message.isSavedToBio,
+                                            isSaving = message.isSavingToBio,
+                                            onToggleField = { fieldId, isSelected ->
+                                                val p = message.proposal
+                                                val updatedFields = p.fields.map {
+                                                    if (it.id == fieldId) it.copy(isSelected = isSelected) else it
+                                                }
+                                                val msgIdx = messages.indexOfFirst { it.id == message.id }
+                                                if (msgIdx != -1) {
+                                                    messages[msgIdx] = message.copy(proposal = p.copy(fields = updatedFields))
+                                                }
+                                            },
+                                            onToggleTier = { fieldId ->
+                                                val p = message.proposal
+                                                val updatedFields = p.fields.map {
+                                                    if (it.id == fieldId) {
+                                                        val newTier = if (it.tier == Tier.BIO) Tier.SUB else Tier.BIO
+                                                        it.copy(tier = newTier)
+                                                    } else it
+                                                }
+                                                val msgIdx = messages.indexOfFirst { it.id == message.id }
+                                                if (msgIdx != -1) {
+                                                    messages[msgIdx] = message.copy(proposal = p.copy(fields = updatedFields))
+                                                }
+                                            },
+                                            onSave = {
+                                                val msgIdx = messages.indexOfFirst { it.id == message.id }
+                                                if (msgIdx != -1) {
+                                                    messages[msgIdx] = message.copy(isSavingToBio = true)
+                                                    scope.launch {
+                                                        try {
+                                                            val result = SaveToBioEngine.saveProposal(
+                                                                context = context,
+                                                                container = app.container,
+                                                                proposal = message.proposal,
+                                                                sourceImageFile = message.imageFile
+                                                            )
+                                                            val currentMsgIdx = messages.indexOfFirst { it.id == message.id }
+                                                            if (currentMsgIdx != -1) {
+                                                                messages[currentMsgIdx] = messages[currentMsgIdx].copy(
+                                                                    isSavingToBio = false,
+                                                                    isSavedToBio = true
+                                                                )
+                                                            }
+                                                            Toast.makeText(
+                                                                context,
+                                                                "Saved! Added ${result.savedBioFields} bio fields & ${result.savedSubFields} doc fields",
+                                                                Toast.LENGTH_SHORT
+                                                            ).show()
+                                                        } catch (e: Exception) {
+                                                            val currentMsgIdx = messages.indexOfFirst { it.id == message.id }
+                                                            if (currentMsgIdx != -1) {
+                                                                messages[currentMsgIdx] = messages[currentMsgIdx].copy(isSavingToBio = false)
+                                                            }
+                                                            Toast.makeText(context, "Save failed: ${e.message}", Toast.LENGTH_SHORT).show()
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        )
+                                    }
+
                                     // Copy Icon row (when answer finished)
                                     if (!message.isStreaming && message.text.isNotBlank()) {
                                         Row(
@@ -819,8 +894,17 @@ fun AiChatScreen(
                                                     attachedImageFile = null
                                                     inputText = ""
 
-                                                    val promptToSend = if (rawText.isBlank() && imageToSend != null) {
-                                                        context.getString(R.string.extract_details_default)
+                                                    val promptToSend = if (imageToSend != null) {
+                                                        if (rawText.isBlank()) {
+                                                            "Please extract all details from this document accurately. Organize clearly as:\n" +
+                                                            "- Document Type: (e.g. Experience Certificate, PAN Card, Admit Card, Marksheet, etc.)\n" +
+                                                            "- Primary Bio (Permanent personal or career info: Name, Father's Name, DOB, Company Name, Industry, Designation, Experience, etc.):\n" +
+                                                            "  * Field: Value\n" +
+                                                            "- Sub-Bio (Document specific info: Certificate ID, Roll No, Issue Date, Expiry Date, Center, etc.):\n" +
+                                                            "  * Field: Value"
+                                                        } else {
+                                                            "$rawText\n\n[Please clearly list detected details like Document Type, Name, Company, Designation, Certificate ID, Issue Date, etc.]"
+                                                        }
                                                     } else {
                                                         rawText
                                                     }
@@ -829,7 +913,7 @@ fun AiChatScreen(
                                                     messages.add(
                                                         ChatItem(
                                                             isUser = true,
-                                                            text = promptToSend,
+                                                            text = rawText.ifBlank { "Extract details from document" },
                                                             imageFile = imageToSend
                                                         )
                                                     )
@@ -838,6 +922,7 @@ fun AiChatScreen(
                                                     val assistantItem = ChatItem(
                                                         isUser = false,
                                                         text = "",
+                                                        imageFile = imageToSend,
                                                         isStreaming = true,
                                                         backend = localAi.realBackend
                                                     )
@@ -865,8 +950,17 @@ fun AiChatScreen(
                                                                         }
                                                                         is GenerationChunk.Done -> {
                                                                             val current = messages[idx]
+                                                                            val selectedProfile = app.container.userProfileDao.getSelectedProfile()
+                                                                            val associatedImage = current.imageFile ?: imageToSend ?: messages.take(idx).lastOrNull { it.isUser && it.imageFile != null }?.imageFile
+                                                                            val proposal = BioExtractionParser.parse(
+                                                                                aiText = current.text,
+                                                                                currentProfile = selectedProfile,
+                                                                                imagePath = associatedImage?.absolutePath
+                                                                            )
                                                                             messages[idx] = current.copy(
-                                                                                isStreaming = false
+                                                                                isStreaming = false,
+                                                                                imageFile = associatedImage,
+                                                                                proposal = proposal
                                                                             )
                                                                             isGenerating = false
                                                                             aiSession.setReady()

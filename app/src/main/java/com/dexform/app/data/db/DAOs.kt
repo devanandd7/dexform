@@ -59,6 +59,9 @@ interface UserProfileDao {
     @Delete
     suspend fun deleteProfile(profile: UserProfileEntity)
 
+    @Query("SELECT * FROM user_profiles WHERE id = :id LIMIT 1")
+    suspend fun getProfileById(id: Long): UserProfileEntity?
+
     @Query("UPDATE user_profiles SET isSelected = 0")
     suspend fun clearSelections()
 
@@ -92,8 +95,14 @@ interface DocRecordDao {
     @Query("SELECT * FROM doc_records WHERE profileId = :profileId ORDER BY createdAt DESC")
     fun getDocsForProfile(profileId: Long): Flow<List<DocRecordEntity>>
 
+    @Query("SELECT * FROM doc_records WHERE profileId = :profileId ORDER BY createdAt DESC")
+    suspend fun getDocsForProfileOnce(profileId: Long): List<DocRecordEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertDoc(doc: DocRecordEntity): Long
+
+    @Update
+    suspend fun updateDoc(doc: DocRecordEntity)
 
     @Delete
     suspend fun deleteDoc(doc: DocRecordEntity)
@@ -104,14 +113,26 @@ interface FieldValueDao {
     @Query("SELECT * FROM field_values WHERE profileId = :profileId AND docId IS NULL")
     fun getBioValues(profileId: Long): Flow<List<FieldValueEntity>>
 
+    @Query("SELECT * FROM field_values WHERE profileId = :profileId AND docId IS NULL")
+    suspend fun getBioValuesOnce(profileId: Long): List<FieldValueEntity>
+
     @Query("SELECT * FROM field_values WHERE profileId = :profileId AND docId = :docId")
     fun getDocValues(profileId: Long, docId: Long): Flow<List<FieldValueEntity>>
+
+    @Query("SELECT * FROM field_values WHERE profileId = :profileId AND docId = :docId")
+    suspend fun getDocValuesOnce(profileId: Long, docId: Long): List<FieldValueEntity>
+
+    @Query("SELECT * FROM field_values WHERE profileId = :profileId")
+    suspend fun getAllValuesForProfile(profileId: Long): List<FieldValueEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertValue(valEntity: FieldValueEntity): Long
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertValues(valEntities: List<FieldValueEntity>)
+
+    @Update
+    suspend fun updateValue(valEntity: FieldValueEntity)
 
     @Delete
     suspend fun deleteValue(valEntity: FieldValueEntity)

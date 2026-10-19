@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sample Job / Exam Application Form - DexForm</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    body { background: #f8fafc; color: #1e293b; padding: 16px; line-height: 1.5; }
+    .container { max-width: 640px; margin: 0 auto; background: #ffffff; border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.06); padding: 24px; border: 1px solid #e2e8f0; }
+    .header { text-align: center; margin-bottom: 24px; border-bottom: 2px solid #f1f5f9; padding-bottom: 16px; }
+    .badge { display: inline-block; background: #dbeafe; color: #1e40af; font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 20px; text-transform: uppercase; margin-bottom: 8px; }
+    h1 { font-size: 20px; color: #0f172a; margin-bottom: 6px; }
+    p.sub { font-size: 13px; color: #64748b; }
+    .notice { background: #f0fdf4; border-left: 4px solid #22c55e; padding: 12px 14px; border-radius: 6px; margin-bottom: 20px; font-size: 13px; color: #166534; }
+    .section-title { font-size: 15px; font-weight: 700; color: #2563eb; margin: 20px 0 12px 0; border-bottom: 1px solid #e2e8f0; padding-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+    .form-group { margin-bottom: 14px; }
+    .form-row { display: flex; gap: 12px; }
+    .form-row .form-group { flex: 1; }
+    label { display: block; font-size: 13px; font-weight: 600; color: #334155; margin-bottom: 4px; }
+    input[type="text"], input[type="email"], input[type="tel"], input[type="date"], select, textarea {
+      width: 100%;
+      padding: 10px 12px;
+      font-size: 14px;
+      border: 1.5px solid #cbd5e1;
+      border-radius: 8px;
+      background: #f8fafc;
+      color: #0f172a;
+      transition: all 0.2s ease;
+      outline: none;
+    }
+    input:focus, select:focus, textarea:focus {
+      border-color: #2563eb;
+      background: #ffffff;
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+    }
+    textarea { resize: vertical; min-height: 60px; }
+    .btn-row { display: flex; gap: 12px; margin-top: 24px; padding-top: 16px; border-top: 1px solid #f1f5f9; }
+    button {
+      flex: 1;
+      padding: 12px;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .btn-submit { background: #2563eb; color: #ffffff; }
+    .btn-submit:hover { background: #1d4ed8; }
+    .btn-reset { background: #f1f5f9; color: #475569; }
+    .btn-reset:hover { background: #e2e8f0; }
+    .success-alert { display: none; background: #ecfdf5; border: 1.5px solid #10b981; color: #065f46; padding: 14px; border-radius: 8px; margin-top: 16px; font-size: 13px; text-align: center; }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <div class="header">
+      <span class="badge">DexForm Test Portal</span>
+      <h1>Sample Recruitment & Exam Form</h1>
+      <p class="sub">Use this demo form to test DexForm's 1-Click Smart Autofill engine.</p>
+    </div>
+
+    <div class="notice">
+      💡 <strong>How to test:</strong> Tap the blue <strong>"⚡ Autofill"</strong> button in the browser's bottom bar (or from the top 3-dots menu). All matching profile and bio details will automatically populate with a green outline!
+    </div>
+
+    <form id="sampleApplicationForm" onsubmit="event.preventDefault(); document.getElementById('successMsg').style.display = 'block';">
+
+      <!-- 1. Personal Information -->
+      <div class="section-title">👤 1. Personal Details</div>
+
+      <div class="form-group">
+        <label for="fullName">Candidate's Full Name (उम्मीदवार का नाम)</label>
+        <input type="text" id="fullName" name="applicant_name" placeholder="Enter your full name" required>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label for="fatherName">Father's Name (पिता का नाम)</label>
+          <input type="text" id="fatherName" name="father_name" placeholder="Father's full name" required>
+        </div>
+        <div class="form-group">
+          <label for="motherName">Mother's Name (माता का नाम)</label>
+          <input type="text" id="motherName" name="mother_name" placeholder="Mother's name">
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label for="dob">Date of Birth (जन्म तिथि)</label>
+          <input type="text" id="dob" name="date_of_birth" placeholder="DD/MM/YYYY">
+        </div>
+        <div class="form-group">
+          <label for="gender">Gender (लिंग)</label>
+          <select id="gender" name="gender">
+            <option value="">-- Select Gender --</option>
+            <option value="Male">Male</option>
+            <option value="Female">Female</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label for="category">Category (वर्ग / जाति)</label>
+          <select id="category" name="social_category">
+            <option value="">-- Select Category --</option>
+            <option value="General">General / UR</option>
+            <option value="OBC">OBC</option>
+            <option value="SC">SC</option>
+            <option value="ST">ST</option>
+            <option value="EWS">EWS</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="idNumber">Aadhaar / PAN Number (पहचान संख्या)</label>
+          <input type="text" id="idNumber" name="aadhaar_number" placeholder="Enter ID number">
+        </div>
+      </div>
+
+      <!-- 2. Contact Information -->
+      <div class="section-title">📞 2. Contact & Address</div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label for="mobileNo">Mobile Number (मोबाइल)</label>
+          <input type="tel" id="mobileNo" name="mobile_phone" placeholder="10-digit mobile number">
+        </div>
+        <div class="form-group">
+          <label for="emailId">Email Address (ईमेल)</label>
+          <input type="email" id="emailId" name="user_email" placeholder="example@gmail.com">
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="address">Permanent Address (स्थायी पता)</label>
+        <textarea id="address" name="residential_address" placeholder="Village / Town, Post, District, State, Pin Code"></textarea>
+      </div>
+
+      <!-- 3. 10th Matriculation Academic Details -->
+      <div class="section-title">🎓 3. 10th / Matriculation Details</div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label for="tenthRoll">10th Roll Number</label>
+          <input type="text" id="tenthRoll" name="matric_roll_no" placeholder="Roll No">
+        </div>
+        <div class="form-group">
+          <label for="tenthYear">Passing Year</label>
+          <input type="text" id="tenthYear" name="tenth_passing_year" placeholder="e.g. 2018">
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label for="tenthBoard">Board / Council</label>
+          <input type="text" id="tenthBoard" name="matric_board" placeholder="e.g. CBSE / State Board">
+        </div>
+        <div class="form-group">
+          <label for="tenthMarks">Marks / Percentage (%)</label>
+          <input type="text" id="tenthMarks" name="10th_marks" placeholder="e.g. 85%">
+        </div>
+      </div>
+
+      <!-- 4. 12th Intermediate Academic Details -->
+      <div class="section-title">🎓 4. 12th / Intermediate Details</div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label for="twelfthRoll">12th Roll Number</label>
+          <input type="text" id="twelfthRoll" name="inter_roll_no" placeholder="Roll No">
+        </div>
+        <div class="form-group">
+          <label for="twelfthYear">Passing Year</label>
+          <input type="text" id="twelfthYear" name="12th_passing_year" placeholder="e.g. 2020">
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label for="twelfthBoard">Board / Council</label>
+          <input type="text" id="twelfthBoard" name="inter_board" placeholder="e.g. CBSE / State Board">
+        </div>
+        <div class="form-group">
+          <label for="twelfthMarks">Marks / Percentage (%)</label>
+          <input type="text" id="twelfthMarks" name="12th_marks" placeholder="e.g. 88%">
+        </div>
+      </div>
+
+      <!-- 5. Additional / Professional Bio -->
+      <div class="section-title">💼 5. Career & Experience Details</div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label for="company">Company / Employer Name</label>
+          <input type="text" id="company" name="company_name" placeholder="e.g. Tech Solutions Pvt Ltd">
+        </div>
+        <div class="form-group">
+          <label for="designation">Designation / Role</label>
+          <input type="text" id="designation" name="job_designation" placeholder="e.g. Software Engineer">
+        </div>
+      </div>
+
+      <div class="btn-row">
+        <button type="reset" class="btn-reset">Reset Form</button>
+        <button type="submit" class="btn-submit">Submit Application</button>
+      </div>
+
+      <div id="successMsg" class="success-alert">
+        🎉 Form submitted successfully! All details were verified.
+      </div>
+    </form>
+  </div>
+
+</body>
+</html>

@@ -10,6 +10,8 @@ import android.webkit.CookieManager
 import android.webkit.SslErrorHandler
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -17,6 +19,7 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -43,9 +46,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.ArrowForward
+import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Cancel
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.DeleteSweep
+import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Lock
@@ -68,6 +73,8 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.unit.sp
+import com.dexform.app.core.autofill.FormAutofillEngine
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -125,6 +132,42 @@ fun BrowserScreen(
     var showPickerOverlay by remember { mutableStateOf(false) }
     var cameraUri by remember { mutableStateOf<Uri?>(null) }
     var showMenu by remember { mutableStateOf(false) }
+    var isAutofilling by remember { mutableStateOf(false) }
+
+    fun performAutofill(overwrite: Boolean = false) {
+        if (activeProfile == null) {
+            Toast.makeText(context, "Please create or select an active profile first", Toast.LENGTH_SHORT).show()
+            onNavigateToProfile()
+            return
+        }
+        val webView = webViewInstance ?: return
+        isAutofilling = true
+        scope.launch {
+            try {
+                val rules = FormAutofillEngine.prepareAutofillRules(app.container, activeProfile)
+                val result = FormAutofillEngine.executeAutofill(webView, rules, overwriteExisting = overwrite)
+                if (result.filledCount > 0) {
+                    val preview = result.filledFields.take(4).joinToString(", ")
+                    val extra = if (result.filledFields.size > 4) " +${result.filledFields.size - 4} more" else ""
+                    Toast.makeText(
+                        context,
+                        "⚡ Filled ${result.filledCount} fields ($preview$extra) using '${activeProfile.name}'",
+                        Toast.LENGTH_LONG
+                    ).show()
+                } else {
+                    Toast.makeText(
+                        context,
+                        "No empty matching form fields found. (Already filled or unsupported inputs)",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            } catch (e: Exception) {
+                Toast.makeText(context, "Autofill error: ${e.message}", Toast.LENGTH_SHORT).show()
+            } finally {
+                isAutofilling = false
+            }
+        }
+    }
 
     val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
         val reqNow = (state as? UploadState.Choosing)?.req
@@ -144,6 +187,10 @@ fun BrowserScreen(
         val trimmed = urlStr.trim()
         val targetUrl = when {
             trimmed.isBlank() -> "https://duckduckgo.com"
+            trimmed.equals("demo", ignoreCase = true) || trimmed.contains("demo-form") || trimmed.contains("dexform.local") -> {
+                "https://dexform.local/demo-form"
+            }
+            trimmed.startsWith("file://") -> trimmed
             !trimmed.contains(" ") && trimmed.contains(".") -> {
                 if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) trimmed else "https://$trimmed"
             }
@@ -293,6 +340,36 @@ fun BrowserScreen(
                         ) {
                             DropdownMenuItem(
                                 leadingIcon = {
+                                    Icon(Icons.Outlined.Description, contentDescription = null, tint = Color(0xFF2563EB))
+                                },
+                                text = { Text("Open Sample Test Form") },
+                                onClick = {
+                                    showMenu = false
+                                    loadUrl("https://dexform.local/demo-form")
+                                }
+                            )
+                            DropdownMenuItem(
+                                leadingIcon = {
+                                    Icon(Icons.Outlined.AutoAwesome, contentDescription = null, tint = Color(0xFF2563EB))
+                                },
+                                text = { Text("Autofill Current Form") },
+                                onClick = {
+                                    showMenu = false
+                                    performAutofill(overwrite = false)
+                                }
+                            )
+                            DropdownMenuItem(
+                                leadingIcon = {
+                                    Icon(Icons.Outlined.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                },
+                                text = { Text("Force Autofill (Overwrite All)") },
+                                onClick = {
+                                    showMenu = false
+                                    performAutofill(overwrite = true)
+                                }
+                            )
+                            DropdownMenuItem(
+                                leadingIcon = {
                                     Icon(Icons.Outlined.Person, contentDescription = null)
                                 },
                                 text = { Text(activeProfile?.let { "Profile: ${it.name}" } ?: "Create / Switch Profile") },
@@ -360,6 +437,30 @@ fun BrowserScreen(
                     ) {
                         Icon(Icons.Outlined.ArrowForward, contentDescription = "Forward")
                     }
+
+                    // Autofill Floating Pill in Bottom Navigation
+                    Surface(
+                        shape = RoundedCornerShape(20.dp),
+                        color = Color(0xFF2563EB),
+                        contentColor = Color.White,
+                        modifier = Modifier.clickable(enabled = !isAutofilling) {
+                            performAutofill(overwrite = false)
+                        }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Outlined.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                if (isAutofilling) "Filling..." else "Autofill",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp
+                            )
+                        }
+                    }
+
                     IconButton(onClick = {
                         showQuickLinksHome = true
                     }) {
@@ -396,7 +497,7 @@ fun BrowserScreen(
                             javaScriptEnabled = true
                             domStorageEnabled = true
                             setSupportMultipleWindows(false)
-                            allowFileAccess = false
+                            allowFileAccess = true
                             allowContentAccess = true
                             mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
                             safeBrowsingEnabled = true
@@ -404,6 +505,21 @@ fun BrowserScreen(
                         CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
 
                         webViewClient = object : WebViewClient() {
+                            override fun shouldInterceptRequest(
+                                view: WebView,
+                                request: WebResourceRequest
+                            ): WebResourceResponse? {
+                                val reqUrl = request.url.toString()
+                                if (reqUrl.contains("dexform.local") || reqUrl.contains("demo-form")) {
+                                    return try {
+                                        val stream = ctx.assets.open("sample_form.html")
+                                        WebResourceResponse("text/html", "UTF-8", stream)
+                                    } catch (e: Exception) {
+                                        null
+                                    }
+                                }
+                                return super.shouldInterceptRequest(view, request)
+                            }
                             override fun onPageFinished(view: WebView, url: String?) {
                                 view.evaluateJavascript(UPLOAD_HOOK_JS, null)
                                 url?.let {
@@ -494,6 +610,46 @@ fun BrowserScreen(
                             .padding(20.dp)
                     ) {
                         Text("Browser Home", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        // Sample Test Form Banner Card
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { loadUrl("https://dexform.local/demo-form") },
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(16.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(44.dp)
+                                        .clip(CircleShape)
+                                        .background(MaterialTheme.colorScheme.primary),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(Icons.Outlined.AutoAwesome, contentDescription = null, tint = Color.White)
+                                }
+                                Spacer(modifier = Modifier.width(14.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        "⚡ Test Autofill (Sample Form)",
+                                        fontWeight = FontWeight.Bold,
+                                        style = MaterialTheme.typography.titleMedium,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                    Text(
+                                        "Click here to open demo job application form and test 1-click autofill",
+                                        fontSize = 12.sp,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                                    )
+                                }
+                            }
+                        }
+
                         Spacer(modifier = Modifier.height(16.dp))
 
                         if (quickLinks.isEmpty()) {
