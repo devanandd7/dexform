@@ -65,3 +65,54 @@ interface UserProfileDao {
     @Query("UPDATE user_profiles SET isSelected = 1 WHERE id = :id")
     suspend fun setSelectedProfile(id: Long)
 }
+
+@Dao
+interface FieldDefDao {
+    @Query("SELECT * FROM field_defs ORDER BY `group` ASC, label ASC")
+    fun getAllDefs(): Flow<List<FieldDefEntity>>
+
+    @Query("SELECT * FROM field_defs WHERE approved = 1")
+    suspend fun getApprovedDefs(): List<FieldDefEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertDef(def: FieldDefEntity)
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertDefs(defs: List<FieldDefEntity>)
+
+    @Update
+    suspend fun updateDef(def: FieldDefEntity)
+
+    @Delete
+    suspend fun deleteDef(def: FieldDefEntity)
+}
+
+@Dao
+interface DocRecordDao {
+    @Query("SELECT * FROM doc_records WHERE profileId = :profileId ORDER BY createdAt DESC")
+    fun getDocsForProfile(profileId: Long): Flow<List<DocRecordEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertDoc(doc: DocRecordEntity): Long
+
+    @Delete
+    suspend fun deleteDoc(doc: DocRecordEntity)
+}
+
+@Dao
+interface FieldValueDao {
+    @Query("SELECT * FROM field_values WHERE profileId = :profileId AND docId IS NULL")
+    fun getBioValues(profileId: Long): Flow<List<FieldValueEntity>>
+
+    @Query("SELECT * FROM field_values WHERE profileId = :profileId AND docId = :docId")
+    fun getDocValues(profileId: Long, docId: Long): Flow<List<FieldValueEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertValue(valEntity: FieldValueEntity): Long
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertValues(valEntities: List<FieldValueEntity>)
+
+    @Delete
+    suspend fun deleteValue(valEntity: FieldValueEntity)
+}

@@ -27,7 +27,7 @@ object OcrEngine {
 
     suspend fun extractText(context: Context, uri: Uri): OcrResult = withContext(Dispatchers.Default) {
         val bitmap = try {
-            BitmapLoader.load(context, uri)
+            BitmapLoader.load(context, uri, maxLongSide = 1280)
         } catch (e: Exception) {
             throw IllegalArgumentException("Cannot load image for OCR: ${e.message}")
         }
@@ -39,19 +39,30 @@ object OcrEngine {
     }
 
     private suspend fun extractTextSmart(bitmap: Bitmap): OcrResult = withContext(Dispatchers.Default) {
-        val enhancedBmp = enhanceImageForOcr(bitmap)
-
-        // Pass 1: Standard orientation
-        var result = processImage(InputImage.fromBitmap(enhancedBmp, 0))
+        // Pass 1: Standard orientation directly on input bitmap
+        var result = try {
+            processImage(InputImage.fromBitmap(bitmap, 0))
+        } catch (e: Exception) {
+            OcrResult("", emptyList())
+        }
 
         // Pass 2: Multi-Orientation check if initial text is sparse
         if (result.fullText.trim().length < 20) {
             val angles = listOf(90f, 180f, 270f)
             for (angle in angles) {
-                val rotated = rotate(enhancedBmp, angle)
-                val testRes = processImage(InputImage.fromBitmap(rotated, 0))
-                if (testRes.fullText.length > result.fullText.length) {
-                    result = testRes
+                val rotated = try { rotate(bitmap, angle) } catch (_: Throwable) { null }
+                if (rotated != null) {
+                    val testRes = try {
+                        processImage(InputImage.fromBitmap(rotated, 0))
+                    } catch (_: Throwable) {
+                        OcrResult("", emptyList())
+                    }
+                    if (testRes.fullText.length > result.fullText.length) {
+                        result = testRes
+                    }
+                    if (rotated != bitmap) {
+                        try { rotated.recycle() } catch (_: Throwable) {}
+                    }
                 }
             }
         }

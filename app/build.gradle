@@ -88,6 +88,7 @@ dependencies {
 
     implementation libs.mlkit.text.recognition
     implementation libs.mediapipe.tasks.genai
+    implementation libs.mediapipe.tasks.vision
 
     testImplementation libs.junit
     androidTestImplementation libs.androidx.test.ext

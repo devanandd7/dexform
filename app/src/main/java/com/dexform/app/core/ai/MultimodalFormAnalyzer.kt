@@ -62,7 +62,11 @@ object MultimodalFormAnalyzer {
             Requirement: MaxKB=${parsedReq.maxBytes?.let { it / 1024 }}, MinKB=${parsedReq.minBytes?.let { it / 1024 }}, Dims=${parsedReq.widthPx}x${parsedReq.heightPx}, Formats=${parsedReq.formats}
         """.trimIndent()
 
-        val aiSummary = localAiManager.generateResponse(prompt)
+        val aiSummary = try {
+            localAiManager.generateResponse(prompt)
+        } catch (_: Exception) {
+            "Form requirement parsed: $correctedText"
+        }
 
         val detectedType = when {
             rawText.contains("sig", ignoreCase = true) -> "Signature"
