@@ -70,7 +70,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -119,7 +118,7 @@ fun BrowserScreen(
     var webViewInstance by remember { mutableStateOf<WebView?>(null) }
     var currentUrl by remember { mutableStateOf("https://duckduckgo.com") }
     var inputUrl by remember { mutableStateOf("") }
-    var pageProgress by remember { mutableFloatStateOf(0f) }
+    var pageProgress by remember { mutableStateOf(0f) }
     var isLoading by remember { mutableStateOf(false) }
     var showQuickLinksHome by remember { mutableStateOf(false) }
     var showHistoryOverlay by remember { mutableStateOf(false) }

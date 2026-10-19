@@ -3,17 +3,28 @@ package com.dexform.app.core.ai
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.net.Uri
 import android.util.Log
-import com.google.mediapipe.tasks.genai.llminference.LlmInference
-import com.google.mediapipe.tasks.genai.llminference.LlmInferenceSession
-import com.google.mediapipe.tasks.genai.llminference.ProgressListener
+import com.dexform.app.BuildConfig
+import com.google.ai.edge.litertlm.Backend
+import com.google.ai.edge.litertlm.Content
+import com.google.ai.edge.litertlm.Contents
+import com.google.ai.edge.litertlm.Conversation
+import com.google.ai.edge.litertlm.ConversationConfig
+import com.google.ai.edge.litertlm.Engine
+import com.google.ai.edge.litertlm.EngineConfig
+import com.google.ai.edge.litertlm.Message
+import com.google.ai.edge.litertlm.MessageCallback
+import com.google.ai.edge.litertlm.SamplerConfig
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -21,8 +32,585 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.io.FileOutputStream
-import java.net.HttpURLConnection
-import java.net.URL
+
+sealed interface GenerationChunk {
+    data class Token(val text: String) : GenerationChunk
+    data class Done(val totalCharacters: Int, val elapsedMs: Long, val ttftMs: Long) : GenerationChunk
+    data class Error(val throwable: Throwable) : GenerationChunk
+}
+
+class LocalAiManager(private val context: Context) {
+
+    companion object {
+        private const val TAG = "LocalAiManager"
+        const val MODEL_DISPLAY_NAME = "Gemma-4-E2B-it"
+        const val MODEL_FILE_NAME = "gemma-4-E2B-it.litertlm"
+        const val MIN_MODEL_SIZE_BYTES = 500 * 1024 * 1024L // 500 MB minimum check
+        const val DEFAULT_MAX_TOKENS = 2048
+        const val DEFAULT_TIMEOUT_MS = 120_000L // 120 seconds timeout per answer
+    }
+
+    private val engineMutex = Mutex()
+
+    private var engineInstance: Any? = null
+    private var activeConversationInstance: Any? = null
+
+    var realBackend: String = "GPU"
+        private set
+
+    val isLoaded: Boolean
+        get() = engineInstance != null
+
+    val modelFile: File?
+        get() = findGemmaModelFile()
+
+    /**
+     * Finds only the Gemma 4 E2B .litertlm file and verifies size.
+     */
+    fun findGemmaModelFile(): File? {
+        val candidates = listOf(
+            File(context.filesDir, "models/$MODEL_FILE_NAME"),
+            File(context.getExternalFilesDir("models"), MODEL_FILE_NAME),
+            File("/sdcard/Android/data/com.google.ai.edge.gallery/files/Gemma_4_E2B_it/$MODEL_FILE_NAME"),
+            File("/sdcard/Download/$MODEL_FILE_NAME")
+        )
+
+        for (candidate in candidates) {
+            try {
+                if (candidate.exists() && candidate.isFile && candidate.length() >= MIN_MODEL_SIZE_BYTES) {
+                    return candidate
+                }
+            } catch (_: Exception) {}
+        }
+
+        // Check inside app models directory for case-insensitive match
+        val modelDir = File(context.filesDir, "models")
+        if (modelDir.exists() && modelDir.isDirectory) {
+            val found = modelDir.listFiles()?.firstOrNull {
+                it.isFile && it.name.equals(MODEL_FILE_NAME, ignoreCase = true) && it.length() >= MIN_MODEL_SIZE_BYTES
+            }
+            if (found != null) return found
+        }
+
+        val extDir = context.getExternalFilesDir("models")
+        if (extDir != null && extDir.exists() && extDir.isDirectory) {
+            val found = extDir.listFiles()?.firstOrNull {
+                it.isFile && it.name.equals(MODEL_FILE_NAME, ignoreCase = true) && it.length() >= MIN_MODEL_SIZE_BYTES
+            }
+            if (found != null) return found
+        }
+
+        return null
+    }
+
+    /**
+     * Initializes the LiteRT-LM engine.
+     * Tries GPU acceleration first (matching Edge Gallery), and falls back to CPU if GPU fails.
+     * Takes engineMutex. Does nothing if already loaded.
+     */
+    suspend fun load(
+        preferredAccelerator: String = "GPU",
+        maxTokens: Int = DEFAULT_MAX_TOKENS
+    ): Boolean = withContext(Dispatchers.IO) {
+        engineMutex.withLock {
+            if (engineInstance != null) {
+                Log.d(TAG, "Engine already initialized. Skipping load.")
+                return@withLock true
+            }
+
+            val targetFile = findGemmaModelFile()
+            if (targetFile == null || !targetFile.exists() || targetFile.length() < MIN_MODEL_SIZE_BYTES) {
+                Log.e(TAG, "Gemma 4 E2B model file not found or size < 500MB")
+                return@withLock false
+            }
+
+            val modelPath = targetFile.absolutePath
+            Log.i(TAG, "Loading model: $modelPath (${targetFile.length() / (1024 * 1024)} MB)")
+
+            val cacheDirPath = File(context.cacheDir, "litertlm").apply { if (!exists()) mkdirs() }.absolutePath
+
+            // 1. Try GPU acceleration first
+            if (preferredAccelerator.equals("GPU", ignoreCase = true)) {
+                try {
+                    Log.d(TAG, "Attempting LiteRT-LM Engine initialization on GPU...")
+                    val gpuConfig = EngineConfig(
+                        modelPath = modelPath,
+                        backend = Backend.GPU(),
+                        visionBackend = Backend.GPU(),
+                        maxNumTokens = maxTokens,
+                        cacheDir = cacheDirPath
+                    )
+                    val gpuEngine = Engine(gpuConfig)
+                    gpuEngine.initialize()
+                    engineInstance = gpuEngine
+                    realBackend = "GPU"
+                    Log.i(TAG, "LiteRT-LM Engine successfully loaded on GPU!")
+                    return@withLock true
+                } catch (gpuError: Throwable) {
+                    Log.w(TAG, "GPU initialization failed (${gpuError.message}). Falling back to CPU...", gpuError)
+                    try {
+                        (engineInstance as? Engine)?.close()
+                    } catch (_: Throwable) {}
+                    engineInstance = null
+                }
+            }
+
+            // 2. Fallback to CPU
+            try {
+                Log.d(TAG, "Attempting LiteRT-LM Engine initialization on CPU...")
+                val cpuConfig = EngineConfig(
+                    modelPath = modelPath,
+                    backend = Backend.CPU(),
+                    visionBackend = Backend.CPU(),
+                    maxNumTokens = maxTokens,
+                    cacheDir = cacheDirPath
+                )
+                val cpuEngine = Engine(cpuConfig)
+                cpuEngine.initialize()
+                engineInstance = cpuEngine
+                realBackend = "CPU"
+                Log.i(TAG, "LiteRT-LM Engine successfully loaded on CPU!")
+                return@withLock true
+            } catch (cpuError: Throwable) {
+                Log.e(TAG, "CPU initialization also failed: ${cpuError.message}", cpuError)
+                try {
+                    (engineInstance as? Engine)?.close()
+                } catch (_: Throwable) {}
+                engineInstance = null
+                return@withLock false
+            }
+        }
+    }
+
+    /**
+     * Unloads engine and conversation, taking engineMutex.
+     */
+    suspend fun unload(): Unit = withContext(Dispatchers.IO) {
+        engineMutex.withLock {
+            try {
+                (activeConversationInstance as? Conversation)?.cancelProcess()
+            } catch (e: Exception) {
+                Log.w(TAG, "Error cancelling conversation process: ${e.message}")
+            }
+            try {
+                (activeConversationInstance as? Conversation)?.close()
+            } catch (e: Exception) {
+                Log.w(TAG, "Error closing conversation: ${e.message}")
+            }
+            activeConversationInstance = null
+
+            try {
+                (engineInstance as? Engine)?.close()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error closing engine: ${e.message}")
+            }
+            engineInstance = null
+            Log.i(TAG, "LiteRT-LM Engine and conversation closed and unloaded.")
+        }
+    }
+
+    /**
+     * Resets or creates a conversation session.
+     */
+    suspend fun resetConversation(
+        temperature: Float = 0.8f,
+        topK: Int = 40,
+        topP: Float = 0.95f
+    ): Unit = withContext(Dispatchers.IO) {
+        engineMutex.withLock {
+            val eng = engineInstance as? Engine ?: throw IllegalStateException("Cannot reset conversation: engine is null")
+            try {
+                (activeConversationInstance as? Conversation)?.close()
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed closing previous conversation: ${e.message}")
+            }
+
+            val samplerConfig = SamplerConfig(
+                topK = topK,
+                topP = topP.toDouble(),
+                temperature = temperature.toDouble()
+            )
+            val config = ConversationConfig(
+                samplerConfig = samplerConfig,
+                systemInstruction = null
+            )
+            activeConversationInstance = eng.createConversation(config)
+            Log.d(TAG, "Conversation created/reset with temp=$temperature, topK=$topK, topP=$topP")
+        }
+    }
+
+    /**
+     * Cancels any in-flight generation in the active conversation.
+     */
+    fun cancelGeneration() {
+        try {
+            (activeConversationInstance as? Conversation)?.cancelProcess()
+            Log.i(TAG, "cancelGeneration called on active conversation")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to cancel conversation: ${e.message}")
+        }
+    }
+
+    /**
+     * Sends a message with optional image file and streams response tokens as a Flow.
+     * Takes engineMutex to ensure exclusive inference.
+     */
+    fun sendMessageStream(
+        text: String,
+        imageFile: File? = null,
+        enableThinking: Boolean = false,
+        temperature: Float = 0.8f,
+        topK: Int = 40,
+        topP: Float = 0.95f
+    ): Flow<GenerationChunk> = callbackFlow {
+        val startTime = System.currentTimeMillis()
+        var firstTokenTime: Long? = null
+        var totalChars = 0
+
+        val job = launch(Dispatchers.IO) {
+            try {
+                engineMutex.withLock {
+                    val eng = engineInstance as? Engine
+                    if (eng == null) {
+                        trySend(GenerationChunk.Error(IllegalStateException("AI Engine is not loaded.")))
+                        close()
+                        return@withLock
+                    }
+
+                    if (activeConversationInstance == null) {
+                        val samplerConfig = SamplerConfig(
+                            topK = topK,
+                            topP = topP.toDouble(),
+                            temperature = temperature.toDouble()
+                        )
+                        activeConversationInstance = eng.createConversation(
+                            ConversationConfig(
+                                samplerConfig = samplerConfig,
+                                systemInstruction = null
+                            )
+                        )
+                    }
+
+                    val conversation = activeConversationInstance as Conversation
+
+                    val contents = mutableListOf<Content>()
+                    if (imageFile != null) {
+                        if (!imageFile.exists() || !imageFile.canRead()) {
+                            trySend(GenerationChunk.Error(IllegalStateException("Attached image file cannot be read: ${imageFile.absolutePath}")))
+                            close()
+                            return@withLock
+                        }
+                        if (BuildConfig.DEBUG) {
+                            try {
+                                val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                                BitmapFactory.decodeFile(imageFile.absolutePath, options)
+                                Log.d(
+                                    TAG,
+                                    "Sending image: ${options.outWidth}x${options.outHeight}, bytes=${imageFile.length()}"
+                                )
+                            } catch (_: Exception) {}
+                        }
+                        contents.add(Content.ImageFile(imageFile.absolutePath))
+                    }
+
+                    val promptText = if (text.isBlank() && imageFile != null) "Extract details" else text
+                    if (promptText.isNotBlank()) {
+                        contents.add(Content.Text(promptText))
+                    }
+
+                    if (contents.isEmpty()) {
+                        trySend(GenerationChunk.Error(IllegalArgumentException("Message content cannot be empty.")))
+                        close()
+                        return@withLock
+                    }
+
+                    val extraContext = if (enableThinking) {
+                        mapOf<String, Any>("enable_thinking" to true)
+                    } else {
+                        emptyMap<String, Any>()
+                    }
+
+                    if (BuildConfig.DEBUG) {
+                        Log.d(TAG, "Starting inference on backend: $realBackend, prompt: '$promptText'")
+                    }
+
+                    val completionDeferred = CompletableDeferred<Unit>()
+
+                    val callback = object : MessageCallback {
+                        override fun onMessage(message: Message) {
+                            val tokenText = message.toString().ifEmpty {
+                                message.channels.values.joinToString("")
+                            }
+                            if (tokenText.isEmpty()) return
+                            if (firstTokenTime == null) {
+                                firstTokenTime = System.currentTimeMillis()
+                                if (BuildConfig.DEBUG) {
+                                    val ttft = firstTokenTime!! - startTime
+                                    Log.d(TAG, "Time to first token (TTFT): ${ttft}ms")
+                                }
+                            }
+                            totalChars += tokenText.length
+                            trySend(GenerationChunk.Token(tokenText))
+                        }
+
+                        override fun onDone() {
+                            val elapsed = System.currentTimeMillis() - startTime
+                            val ttft = (firstTokenTime ?: System.currentTimeMillis()) - startTime
+                            if (BuildConfig.DEBUG) {
+                                Log.d(
+                                    TAG,
+                                    "Inference finished. Total time: ${elapsed}ms, characters: $totalChars, backend: $realBackend"
+                                )
+                            }
+                            trySend(GenerationChunk.Done(totalChars, elapsed, ttft))
+                            completionDeferred.complete(Unit)
+                            close()
+                        }
+
+                        override fun onError(throwable: Throwable) {
+                            if (throwable is CancellationException) {
+                                Log.i(TAG, "Inference cancelled by user.")
+                            } else {
+                                Log.e(TAG, "Inference error: ${throwable.message}", throwable)
+                            }
+                            trySend(GenerationChunk.Error(throwable))
+                            completionDeferred.completeExceptionally(throwable)
+                            close(throwable)
+                        }
+                    }
+
+                    try {
+                        conversation.sendMessageAsync(Contents.of(contents), callback, extraContext)
+
+                        // Await completion or timeout
+                        val completed = withTimeoutOrNull(DEFAULT_TIMEOUT_MS) {
+                            completionDeferred.await()
+                        }
+
+                        if (completed == null && completionDeferred.isActive) {
+                            Log.w(TAG, "Inference timed out after ${DEFAULT_TIMEOUT_MS}ms")
+                            conversation.cancelProcess()
+                            val timeoutEx = IllegalStateException("This is taking too long. Try again.")
+                            trySend(GenerationChunk.Error(timeoutEx))
+                            close(timeoutEx)
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Exception during sendMessageAsync: ${e.message}", e)
+                        trySend(GenerationChunk.Error(e))
+                        close(e)
+                    }
+                }
+            } catch (t: Throwable) {
+                Log.e(TAG, "Unexpected error in inference job: ${t.message}", t)
+                trySend(GenerationChunk.Error(t))
+                close(t)
+            }
+        }
+
+        awaitClose {
+            job.cancel()
+            cancelGeneration()
+        }
+    }
+
+    /**
+     * One-shot generation helper (used for self-tests and synchronous checks).
+     * Creates an ephemeral conversation session and closes it immediately when done,
+     * ensuring activeConversationInstance is never polluted.
+     */
+    suspend fun generateOneShot(
+        prompt: String,
+        imageFile: File? = null,
+        timeoutMs: Long = 30_000L
+    ): String = withContext(Dispatchers.IO) {
+        engineMutex.withLock {
+            val eng = engineInstance as? Engine ?: throw IllegalStateException("Engine not initialized")
+            val ephemeral = eng.createConversation(
+                ConversationConfig(
+                    samplerConfig = SamplerConfig(topK = 1, topP = 1.0, temperature = 0.0),
+                    systemInstruction = null
+                )
+            )
+            try {
+                val contents = mutableListOf<Content>()
+                if (imageFile != null && imageFile.exists()) {
+                    contents.add(Content.ImageFile(imageFile.absolutePath))
+                }
+                if (prompt.isNotBlank()) {
+                    contents.add(Content.Text(prompt))
+                }
+                val sb = StringBuilder()
+                val deferred = CompletableDeferred<String>()
+                ephemeral.sendMessageAsync(
+                    Contents.of(contents),
+                    object : MessageCallback {
+                        override fun onMessage(message: Message) {
+                            val token = message.toString().ifEmpty {
+                                message.channels.values.joinToString("")
+                            }
+                            sb.append(token)
+                        }
+                        override fun onDone() {
+                            deferred.complete(sb.toString().trim())
+                        }
+                        override fun onError(throwable: Throwable) {
+                            deferred.completeExceptionally(throwable)
+                        }
+                    },
+                    emptyMap()
+                )
+                val res = withTimeoutOrNull(timeoutMs) {
+                    deferred.await()
+                } ?: run {
+                    ephemeral.cancelProcess()
+                    throw IllegalStateException("One-shot generation timed out after ${timeoutMs}ms")
+                }
+                return@withLock res
+            } finally {
+                try {
+                    ephemeral.close()
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error closing ephemeral conversation: ${e.message}")
+                }
+            }
+        }
+    }
+
+    // =========================================================================
+    // Compatibility bridges for existing tools (ProfileExtractorEngine, SettingsScreen)
+    // =========================================================================
+
+    private val _status = kotlinx.coroutines.flow.MutableStateFlow<ModelStatus>(ModelStatus.NotDownloaded)
+    val status: kotlinx.coroutines.flow.StateFlow<ModelStatus> = _status.asStateFlow()
+
+    fun checkModelStatus() {
+        val target = findGemmaModelFile()
+        if (engineInstance != null) {
+            val size = target?.length() ?: 0L
+            _status.value = ModelStatus.LoadedInRam(size, 1400L)
+        } else if (target != null && target.exists() && target.length() >= MIN_MODEL_SIZE_BYTES) {
+            _status.value = ModelStatus.Downloaded(target.length(), target.absolutePath)
+        } else {
+            _status.value = ModelStatus.NotDownloaded
+        }
+    }
+
+    suspend fun generateResponse(
+        prompt: String,
+        enableThinking: Boolean = false,
+        temperature: Float = 0.8f,
+        topK: Int = 40,
+        topP: Float = 0.95f,
+        onTokenStream: ((partialAnswer: String, partialThought: String?) -> Unit)? = null
+    ): Pair<String, String?> = withContext(Dispatchers.IO) {
+        val fullAnswer = StringBuilder()
+        val deferred = CompletableDeferred<Pair<String, String?>>()
+
+        val flow = sendMessageStream(
+            text = prompt,
+            imageFile = null,
+            enableThinking = enableThinking,
+            temperature = temperature,
+            topK = topK,
+            topP = topP
+        )
+
+        val job = CoroutineScope(Dispatchers.IO).launch {
+            flow.collect { chunk ->
+                when (chunk) {
+                    is GenerationChunk.Token -> {
+                        fullAnswer.append(chunk.text)
+                        onTokenStream?.invoke(fullAnswer.toString(), null)
+                    }
+                    is GenerationChunk.Done -> {
+                        deferred.complete(Pair(fullAnswer.toString().trim(), null))
+                    }
+                    is GenerationChunk.Error -> {
+                        deferred.completeExceptionally(chunk.throwable)
+                    }
+                }
+            }
+        }
+
+        try {
+            deferred.await()
+        } finally {
+            job.cancel()
+        }
+    }
+
+    suspend fun generateResponseWithImage(
+        bitmap: Bitmap,
+        prompt: String,
+        enableThinking: Boolean = false,
+        temperature: Float = 0.8f,
+        topK: Int = 40,
+        topP: Float = 0.95f,
+        onTokenStream: ((partialAnswer: String, partialThought: String?) -> Unit)? = null
+    ): Pair<String, String?> = withContext(Dispatchers.IO) {
+        val tempImage = File(context.cacheDir, "temp_extractor_${System.currentTimeMillis()}.jpg")
+        try {
+            FileOutputStream(tempImage).use { out ->
+                bitmap.compress(Bitmap.CompressFormat.JPEG, 92, out)
+            }
+
+            val fullAnswer = StringBuilder()
+            val deferred = CompletableDeferred<Pair<String, String?>>()
+
+            val flow = sendMessageStream(
+                text = prompt,
+                imageFile = tempImage,
+                enableThinking = enableThinking,
+                temperature = temperature,
+                topK = topK,
+                topP = topP
+            )
+
+            val job = CoroutineScope(Dispatchers.IO).launch {
+                flow.collect { chunk ->
+                    when (chunk) {
+                        is GenerationChunk.Token -> {
+                            fullAnswer.append(chunk.text)
+                            onTokenStream?.invoke(fullAnswer.toString(), null)
+                        }
+                        is GenerationChunk.Done -> {
+                            deferred.complete(Pair(fullAnswer.toString().trim(), null))
+                        }
+                        is GenerationChunk.Error -> {
+                            deferred.completeExceptionally(chunk.throwable)
+                        }
+                    }
+                }
+            }
+
+            try {
+                deferred.await()
+            } finally {
+                job.cancel()
+            }
+        } finally {
+            if (tempImage.exists()) tempImage.delete()
+        }
+    }
+
+    suspend fun loadModelIntoRam(): Boolean = load()
+
+    suspend fun unloadFromRam() {
+        unload()
+    }
+
+    fun downloadModel(userHfToken: String? = null) {
+        // Model file should be placed in app_files/models/gemma-4-E2B-it.litertlm
+        checkModelStatus()
+    }
+
+    fun deleteModel(): Boolean {
+        val target = findGemmaModelFile()
+        val deleted = target?.delete() ?: false
+        checkModelStatus()
+        return deleted
+    }
+}
 
 sealed interface ModelStatus {
     object NotDownloaded : ModelStatus
@@ -32,642 +620,3 @@ sealed interface ModelStatus {
     data class Error(val message: String) : ModelStatus
 }
 
-class LocalAiManager(private val context: Context) {
-
-    private val scope = CoroutineScope(Dispatchers.IO)
-    private val inferenceMutex = Mutex()
-    private val modelDir = File(context.filesDir, "models").apply { mkdirs() }
-    val modelFile = File(modelDir, "gemma-4-E2B-it.litertlm")
-
-    val isLoadedInRam: Boolean
-        get() = llmInference != null
-
-    private val _status = MutableStateFlow<ModelStatus>(ModelStatus.NotDownloaded)
-    val status: StateFlow<ModelStatus> = _status.asStateFlow()
-
-    private var llmInference: LlmInference? = null
-    private var activeSession: LlmInferenceSession? = null
-
-    // Exact LiteRT Community Gemma 4 E2B Direct Download Link
-    private val publicModelUrls = listOf(
-        "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm",
-        "https://huggingface.co/litert-community/Gemma-2b-it-int4-cpu/resolve/main/gemma-2b-it-cpu-int4.bin",
-        "https://raw.githubusercontent.com/google/mediapipe/main/mediapipe/tasks/testdata/genai/gemma-2b-it-cpu-int4.bin"
-    )
-
-    init {
-        checkModelStatus()
-    }
-
-    fun getAvailableModelFile(): File? {
-        if (modelFile.exists() && modelFile.length() > 0) return modelFile
-
-        // Search modelDir for any .litertlm, .bin, or .task file
-        val inDir = modelDir.listFiles()?.firstOrNull { f ->
-            (f.name.endsWith(".litertlm") || f.name.endsWith(".bin") || f.name.endsWith(".task")) && f.length() > 0
-        }
-        if (inDir != null) return inDir
-
-        // Search external app storage
-        val extDir = context.getExternalFilesDir("models")
-        val extFile = extDir?.listFiles()?.firstOrNull { f ->
-            (f.name.endsWith(".litertlm") || f.name.endsWith(".bin") || f.name.endsWith(".task")) && f.length() > 0
-        }
-        if (extFile != null) return extFile
-
-        // Check Google AI Edge Gallery model folder if accessible
-        try {
-            val galleryDir = File("/sdcard/Android/data/com.google.ai.edge.gallery/files/Gemma_4_E2B_it")
-            if (galleryDir.exists()) {
-                val galleryModel = galleryDir.walkTopDown().firstOrNull { it.isFile && it.name.endsWith(".litertlm") && it.length() > 0 }
-                if (galleryModel != null) return galleryModel
-            }
-        } catch (_: Exception) {}
-
-        return null
-    }
-
-    fun checkModelStatus() {
-        val target = getAvailableModelFile()
-        if (llmInference != null) {
-            val size = target?.length() ?: modelFile.length()
-            _status.value = ModelStatus.LoadedInRam(size, 1400L)
-        } else if (target != null && target.exists() && target.length() > 0) {
-            _status.value = ModelStatus.Downloaded(target.length(), target.absolutePath)
-        } else {
-            _status.value = ModelStatus.NotDownloaded
-        }
-    }
-
-    fun downloadModel(userHfToken: String? = null) {
-        if (_status.value is ModelStatus.Downloading) return
-        scope.launch {
-            _status.value = ModelStatus.Downloading(0, 0, 1350000000L)
-            var success = false
-            var lastError = "Download failed"
-
-            for (url in publicModelUrls) {
-                try {
-                    withContext(Dispatchers.IO) {
-                        downloadFileWithRedirects(url, modelFile, userHfToken) { downloaded, total, pct ->
-                            _status.value = ModelStatus.Downloading(pct, downloaded, total)
-                        }
-                    }
-                    success = true
-                    break
-                } catch (e: Exception) {
-                    lastError = e.message ?: "Failed from $url"
-                    if (modelFile.exists()) modelFile.delete()
-                }
-            }
-
-            if (success) {
-                _status.value = ModelStatus.Downloaded(modelFile.length(), modelFile.absolutePath)
-            } else {
-                _status.value = ModelStatus.Error(lastError)
-            }
-        }
-    }
-
-    private fun downloadFileWithRedirects(
-        urlString: String,
-        outputFile: File,
-        userHfToken: String?,
-        onProgress: (Long, Long, Int) -> Unit
-    ) {
-        var currentUrl = urlString
-        var redirects = 0
-        while (redirects < 10) {
-            val url = URL(currentUrl)
-            val connection = url.openConnection() as HttpURLConnection
-            connection.connectTimeout = 15000
-            connection.readTimeout = 30000
-            connection.instanceFollowRedirects = true
-            connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Android; DexForm App)")
-
-            if (!userHfToken.isNullOrBlank() && currentUrl.contains("huggingface.co")) {
-                connection.setRequestProperty("Authorization", "Bearer ${userHfToken.trim()}")
-            }
-
-            val status = connection.responseCode
-            if (status == HttpURLConnection.HTTP_MOVED_TEMP ||
-                status == HttpURLConnection.HTTP_MOVED_PERM ||
-                status == HttpURLConnection.HTTP_SEE_OTHER ||
-                status == 307 || status == 308) {
-                val redirectUrl = connection.getHeaderField("Location")
-                if (!redirectUrl.isNullOrBlank()) {
-                    currentUrl = redirectUrl
-                    redirects++
-                    connection.disconnect()
-                    continue
-                }
-            }
-
-            if (status == HttpURLConnection.HTTP_UNAUTHORIZED || status == HttpURLConnection.HTTP_FORBIDDEN) {
-                throw IllegalStateException("HTTP $status: Authorization required")
-            }
-
-            if (status != HttpURLConnection.HTTP_OK) {
-                throw IllegalStateException("Server returned HTTP status $status")
-            }
-
-            val totalLength = if (connection.contentLengthLong > 0) connection.contentLengthLong else 1350000000L
-            var downloaded = 0L
-
-            connection.inputStream.use { input ->
-                FileOutputStream(outputFile).use { output ->
-                    val buffer = ByteArray(64 * 1024)
-                    var read: Int
-                    while (input.read(buffer).also { read = it } != -1) {
-                        output.write(buffer, 0, read)
-                        downloaded += read
-                        val pct = ((downloaded.toDouble() / totalLength) * 100).toInt().coerceIn(0, 99)
-                        onProgress(downloaded, totalLength, pct)
-                    }
-                }
-            }
-            return
-        }
-        throw IllegalStateException("Too many HTTP redirects")
-    }
-
-    suspend fun loadModelIntoRam(): Boolean = withContext(Dispatchers.Default) {
-        val target = getAvailableModelFile()
-        if (target == null || !target.exists() || target.length() == 0L) {
-            _status.value = ModelStatus.Error("AI Model file not found on device storage. Please place the model file in app models folder.")
-            return@withContext false
-        }
-
-        // 1. Try GPU acceleration (matching Edge Gallery configuration)
-        try {
-            Log.d("LocalAiManager", "Loading AI model with GPU acceleration: ${target.absolutePath} (${target.length() / (1024 * 1024)} MB)")
-            val gpuOptionsBuilder = LlmInference.LlmInferenceOptions.builder()
-                .setModelPath(target.absolutePath)
-                .setPreferredBackend(LlmInference.Backend.GPU)
-                .setMaxTokens(2048)
-                .setMaxTopK(40)
-
-            // Safely set maxNumImages if supported by runtime
-            try {
-                val setMaxNumImagesMethod = gpuOptionsBuilder.javaClass.getMethod("setMaxNumImages", Int::class.javaPrimitiveType)
-                setMaxNumImagesMethod.invoke(gpuOptionsBuilder, 1)
-            } catch (_: Throwable) {
-                try {
-                    val setMaxNumImagesMethod = gpuOptionsBuilder.javaClass.getMethod("setMaxNumImages", Integer::class.java)
-                    setMaxNumImagesMethod.invoke(gpuOptionsBuilder, 1)
-                } catch (_: Throwable) {}
-            }
-
-            val gpuOptions = gpuOptionsBuilder.build()
-            llmInference = LlmInference.createFromOptions(context, gpuOptions)
-            _status.value = ModelStatus.LoadedInRam(target.length(), 1400L)
-            Log.d("LocalAiManager", "AI Model successfully loaded into RAM on GPU!")
-            return@withContext true
-        } catch (gpuError: Throwable) {
-            Log.w("LocalAiManager", "GPU init failed (${gpuError.message}), falling back to CPU...", gpuError)
-            // 2. Fallback to CPU if GPU is unavailable
-            try {
-                val cpuOptionsBuilder = LlmInference.LlmInferenceOptions.builder()
-                    .setModelPath(target.absolutePath)
-                    .setPreferredBackend(LlmInference.Backend.CPU)
-                    .setMaxTokens(2048)
-                    .setMaxTopK(40)
-
-                try {
-                    val setMaxNumImagesMethod = cpuOptionsBuilder.javaClass.getMethod("setMaxNumImages", Int::class.javaPrimitiveType)
-                    setMaxNumImagesMethod.invoke(cpuOptionsBuilder, 1)
-                } catch (_: Throwable) {}
-
-                val cpuOptions = cpuOptionsBuilder.build()
-                llmInference = LlmInference.createFromOptions(context, cpuOptions)
-                _status.value = ModelStatus.LoadedInRam(target.length(), 1400L)
-                Log.d("LocalAiManager", "AI Model successfully loaded into RAM on CPU!")
-                return@withContext true
-            } catch (cpuError: Throwable) {
-                Log.e("LocalAiManager", "Failed to load model on CPU as well: ${cpuError.message}", cpuError)
-                llmInference = null
-                val rawMsg = cpuError.message ?: gpuError.message ?: "Failed to initialize AI model in RAM"
-                val displayMsg = if (rawMsg.contains("RTLM", ignoreCase = true)) {
-                    "Model format 'RTLM' requires MediaPipe Tasks GenAI 0.10.35+ or LiteRT-LM runtime (sync gradle in Android Studio), or a standard .bin TFL3 model."
-                } else {
-                    rawMsg
-                }
-                _status.value = ModelStatus.Error(displayMsg)
-                return@withContext false
-            }
-        }
-    }
-
-    fun cleanResponse(rawText: String, enableThinking: Boolean = false): Pair<String, String?> {
-        var text = rawText
-
-        // 1. Truncate at first occurrence of end-of-turn or prompt markers to avoid endless model self-talk
-        val stopMarkers = listOf(
-            "<end_of_turn>",
-            "<start_of_turn>",
-            "<turn|>",
-            "<eos>",
-            "</end_",
-            "</end",
-            "\nturn>",
-            "\n<turn",
-            "\n>>",
-            "\n\n>>",
-            "\n```</end",
-            "\nuser\n",
-            "\nmodel\n"
-        )
-
-        var earliestStop = -1
-        for (marker in stopMarkers) {
-            val idx = text.indexOf(marker)
-            if (idx != -1 && (earliestStop == -1 || idx < earliestStop)) {
-                earliestStop = idx
-            }
-        }
-        if (earliestStop != -1) {
-            text = text.substring(0, earliestStop)
-        }
-
-        // 2. If response has a complete JSON block, truncate any trailing hallucinated repetition after it
-        val jsonEndMatch = Regex("""(?s)```(?:json)?\s*\{.*?\}(?:\s*```)""").find(text)
-        if (jsonEndMatch != null && jsonEndMatch.range.last < text.length - 1) {
-            val after = text.substring(jsonEndMatch.range.last + 1).trim()
-            if (after.startsWith("`") || after.startsWith("turn") || after.startsWith(">") || after.startsWith("<") || after.startsWith("/") || after.lines().all { it.isBlank() || it.startsWith("`") || it.length < 15 }) {
-                text = text.substring(0, jsonEndMatch.range.last + 1).trim()
-            }
-        }
-
-        // 3. Remove stray marker lines (e.g. "turn>", ">>", ">")
-        text = text
-            .replace(Regex("""(?m)^turn>.*$"""), "")
-            .replace(Regex("""(?m)^>>.*$"""), "")
-            .replace(Regex("""(?m)^>.*$"""), "")
-            .replace(Regex("""<start_of_turn>\w*"""), "")
-            .replace(Regex("""<end_of_turn>"""), "")
-            .replace(Regex("""<turn\|>"""), "")
-            .replace(Regex("""<eos>"""), "")
-            .replace(Regex("""</?channel:?\w*>"""), "")
-            .trim()
-
-        var extractedThought: String? = null
-        var extractedAnswer = text
-
-        // 1. XML-style <thought>...</thought>
-        val xmlMatch = Regex("""(?si)<thought>(.*?)(?:</thought>|\Z)""").find(text)
-        if (xmlMatch != null) {
-            extractedThought = xmlMatch.groupValues[1].trim()
-            val before = text.substring(0, xmlMatch.range.first).trim()
-            val after = if (xmlMatch.range.last < text.length - 1) text.substring(xmlMatch.range.last + 1).trim() else ""
-            extractedAnswer = listOf(before, after).filter { it.isNotBlank() }.joinToString("\n\n").trim()
-        } else {
-            // 2. Marker style: "thought\nThinking Process:" or "Thinking Process:" or "^thought\s*\n"
-            val markerMatch = Regex("""(?si)(?:^|\n)\s*(?:thought\b\s*)?Thinking Process:\s*""").find(text)
-            if (markerMatch != null) {
-                val thoughtStartIndex = markerMatch.range.first
-                val afterMarker = text.substring(markerMatch.range.last + 1)
-                val sections = afterMarker.split(Regex("""\n\s*\n"""))
-                val thoughtParagraphs = mutableListOf<String>()
-                val answerParagraphs = mutableListOf<String>()
-                var foundAnswer = false
-
-                for (p in sections) {
-                    val trimmed = p.trim()
-                    if (trimmed.isEmpty()) continue
-                    val isReasoningStep = trimmed.matches(Regex("""^(?:\d+[\.\)]|[\*\-•]|\*\*Step|\*\*Analyze|\*\*Consider|\*\*Goal|\*\*Context|\bAnalyze|\bIdentify|\bEvaluate|\bDetermine|\bThe user|\bWe need|\bLet's|\bPlan:).*""", RegexOption.IGNORE_CASE))
-                    if (!foundAnswer && isReasoningStep) {
-                        thoughtParagraphs.add(trimmed)
-                    } else if (!foundAnswer && thoughtParagraphs.isNotEmpty() && !isReasoningStep) {
-                        foundAnswer = true
-                        answerParagraphs.add(trimmed)
-                    } else if (foundAnswer) {
-                        answerParagraphs.add(trimmed)
-                    } else {
-                        thoughtParagraphs.add(trimmed)
-                    }
-                }
-
-                extractedThought = thoughtParagraphs.joinToString("\n\n").trim()
-                val beforeMarker = text.substring(0, thoughtStartIndex).trim()
-                val ans = answerParagraphs.joinToString("\n\n").trim()
-                extractedAnswer = if (beforeMarker.isNotBlank() && ans.isNotBlank()) {
-                    "$beforeMarker\n\n$ans"
-                } else if (ans.isNotBlank()) {
-                    ans
-                } else {
-                    beforeMarker
-                }
-            } else {
-                val plainThoughtMatch = Regex("""(?si)^\s*thought\s*\n(.*)""").find(text)
-                if (plainThoughtMatch != null) {
-                    val content = plainThoughtMatch.groupValues[1]
-                    val sections = content.split(Regex("""\n\s*\n"""))
-                    if (sections.size > 1) {
-                        extractedThought = sections.dropLast(1).joinToString("\n\n").trim()
-                        extractedAnswer = sections.last().trim()
-                    } else {
-                        extractedThought = content.trim()
-                        extractedAnswer = ""
-                    }
-                }
-            }
-        }
-
-        // Clean up remaining labels from answer
-        extractedAnswer = extractedAnswer
-            .replace(Regex("""(?si)^\s*thought\s*"""), "")
-            .replace(Regex("""(?si)^\s*Thinking Process:\s*"""), "")
-            .replace(Regex("""(?si)^\s*Thought:\s*"""), "")
-            .trimStart('!', ' ', '\n', '\t', ':', '-')
-            .trim()
-
-        if (extractedAnswer.isBlank() && !extractedThought.isNullOrBlank()) {
-            extractedAnswer = extractedThought
-            extractedThought = null
-        }
-
-        val cleanAnswer = extractedAnswer.ifBlank { text }
-        val finalThinking = if (enableThinking) extractedThought else null
-        return Pair(cleanAnswer, finalThinking)
-    }
-
-    fun formatPrompt(userPrompt: String, systemPrompt: String?, enableThinking: Boolean): String {
-        val sysDirective = systemPrompt?.trim()?.takeIf { it.isNotBlank() }
-        return if (sysDirective != null) {
-            "<start_of_turn>user\n$sysDirective\n\n$userPrompt<end_of_turn>\n<start_of_turn>model\n"
-        } else {
-            "<start_of_turn>user\n$userPrompt<end_of_turn>\n<start_of_turn>model\n"
-        }
-    }
-
-    fun stopCurrentGeneration() {
-        try {
-            Log.d("LocalAiManager", "Stopping active AI generation...")
-            activeSession?.cancelGenerateResponseAsync()
-            activeSession?.close()
-            activeSession = null
-        } catch (e: Throwable) {
-            Log.w("LocalAiManager", "cancelGenerateResponseAsync error: ${e.message}")
-        }
-    }
-
-    private fun fastStripControlTokens(text: String): String {
-        val idx = text.indexOf("<end_of_turn>")
-        val raw = if (idx != -1) text.substring(0, idx) else text
-        val turnIdx = raw.indexOf("\nturn>")
-        val trimmed = if (turnIdx != -1) raw.substring(0, turnIdx) else raw
-        return trimmed
-            .replace("<start_of_turn>model\n", "")
-            .replace("<start_of_turn>model", "")
-            .replace("<start_of_turn>", "")
-            .trimStart()
-    }
-
-    suspend fun generateResponse(
-        prompt: String,
-        enableThinking: Boolean = false,
-        systemPrompt: String? = null,
-        temperature: Float = 0.8f,
-        topK: Int = 40,
-        topP: Float = 0.95f,
-        onTokenStream: ((String, String?) -> Unit)? = null
-    ): Pair<String, String?> = inferenceMutex.withLock {
-        withContext(Dispatchers.Default) {
-            val inference = llmInference
-                ?: throw IllegalStateException("AI Model is not loaded into RAM. Please tap 'Load to RAM' at the top to initialize.")
-
-            val formattedPrompt = formatPrompt(prompt, systemPrompt, enableThinking)
-            val deferred = CompletableDeferred<Pair<String, String?>>()
-            val sb = StringBuilder()
-
-            val sessionOptions = LlmInferenceSession.LlmInferenceSessionOptions.builder()
-                .setTemperature(temperature.coerceIn(0.0f, 2.0f))
-                .setTopK(topK.coerceIn(1, 40))
-                .setTopP(topP.coerceIn(0.01f, 1.0f))
-                .build()
-
-            val session = LlmInferenceSession.createFromOptions(inference, sessionOptions)
-            activeSession = session
-
-            try {
-                session.addQueryChunk(formattedPrompt)
-
-                if (onTokenStream != null) {
-                    val listener = ProgressListener<String> { partial, done ->
-                        if (!partial.isNullOrEmpty()) {
-                            sb.append(partial)
-                            val currentStr = sb.toString()
-                            // Lightweight non-blocking token delivery
-                            val displayStream = if (enableThinking) currentStr else fastStripControlTokens(currentStr)
-                            onTokenStream(displayStream, null)
-
-                            val stopSequences = listOf("<end_of_turn>", "<start_of_turn>", "<eos>", "\nturn>", "</end")
-                            if (stopSequences.any { currentStr.contains(it) }) {
-                                if (!deferred.isCompleted) {
-                                    deferred.complete(cleanResponse(currentStr, enableThinking))
-                                }
-                                try { session.cancelGenerateResponseAsync() } catch (_: Throwable) {}
-                                return@ProgressListener
-                            }
-                        }
-                        if (done && !deferred.isCompleted) {
-                            deferred.complete(cleanResponse(sb.toString(), enableThinking))
-                        }
-                    }
-
-                    session.generateResponseAsync(listener)
-                    val res = withTimeoutOrNull(90_000) { deferred.await() }
-                    if (res != null) return@withContext res
-                    return@withContext cleanResponse(sb.toString(), enableThinking)
-                } else {
-                    val res = session.generateResponse()
-                    val result = cleanResponse(res ?: "", enableThinking)
-                    return@withContext result
-                }
-            } finally {
-                try { session.cancelGenerateResponseAsync() } catch (_: Throwable) {}
-                try { session.close() } catch (_: Throwable) {}
-                if (activeSession === session) {
-                    activeSession = null
-                }
-            }
-        }
-    }
-
-    suspend fun generateResponse(prompt: String): String = withContext(Dispatchers.Default) {
-        generateResponse(prompt, enableThinking = false, systemPrompt = null, onTokenStream = null).first
-    }
-
-    /**
-     * Direct Vision Flow: Directly feeds the Bitmap to LlmInferenceSession.addImage(mpImage)
-     * matching Edge Gallery's exact native architecture for 10x faster inference without OCR.
-     */
-    suspend fun generateResponseWithImage(
-        bitmap: Bitmap,
-        prompt: String,
-        enableThinking: Boolean = false,
-        systemPrompt: String? = null,
-        temperature: Float = 0.0f, // Pure greedy decoding for ultra-fast document extraction
-        topK: Int = 1,
-        topP: Float = 0.95f,
-        onTokenStream: ((String, String?) -> Unit)? = null
-    ): Pair<String, String?> = inferenceMutex.withLock {
-        withContext(Dispatchers.Default) {
-            val inference = llmInference
-                ?: throw IllegalStateException("AI Model is not loaded into RAM. Please tap 'Load to RAM' at the top.")
-
-            val formattedPrompt = formatPrompt(prompt, systemPrompt, enableThinking)
-            val deferred = CompletableDeferred<Pair<String, String?>>()
-            val sb = StringBuilder()
-
-            val sessionOptionsBuilder = LlmInferenceSession.LlmInferenceSessionOptions.builder()
-                .setTemperature(temperature.coerceIn(0.0f, 2.0f))
-                .setTopK(topK.coerceIn(1, 40))
-                .setTopP(topP.coerceIn(0.01f, 1.0f))
-
-            try {
-                val graphOptClass = Class.forName("com.google.mediapipe.tasks.genai.llminference.LlmInferenceSession\$LlmInferenceSessionOptions\$GraphOptions")
-                val graphBuilder = graphOptClass.getMethod("builder").invoke(null)
-                graphBuilder.javaClass.getMethod("setEnableVisionModality", Boolean::class.javaPrimitiveType).invoke(graphBuilder, true)
-                val graphOptions = graphBuilder.javaClass.getMethod("build").invoke(graphBuilder)
-                sessionOptionsBuilder.javaClass.getMethod("setGraphOptions", graphOptClass).invoke(sessionOptionsBuilder, graphOptions)
-            } catch (_: Throwable) {}
-
-            val session = LlmInferenceSession.createFromOptions(inference, sessionOptionsBuilder.build())
-            activeSession = session
-
-            try {
-                // Scale to 512px: Optimal native patch resolution, 4x lighter memory and 3x faster GPU embedding
-                val scaledBitmap = scaleBitmapToMaxDimension(bitmap, 512)
-
-                // Connect native Edge Gallery vision flow via dynamic reflection
-                tryAddImageToSession(session, scaledBitmap)
-                session.addQueryChunk(formattedPrompt)
-
-                val listener = ProgressListener<String> { partial, done ->
-                    if (!partial.isNullOrEmpty()) {
-                        sb.append(partial)
-                        val currentStr = sb.toString()
-                        // Lightweight non-blocking token delivery
-                        val displayStream = if (enableThinking) currentStr else fastStripControlTokens(currentStr)
-                        onTokenStream?.invoke(displayStream, null)
-
-                        val stopSequences = listOf("<end_of_turn>", "<start_of_turn>", "<eos>", "\nturn>", "</end")
-                        if (stopSequences.any { currentStr.contains(it) }) {
-                            if (!deferred.isCompleted) {
-                                deferred.complete(cleanResponse(currentStr, enableThinking))
-                            }
-                            try { session.cancelGenerateResponseAsync() } catch (_: Throwable) {}
-                            return@ProgressListener
-                        }
-                    }
-                    if (done && !deferred.isCompleted) {
-                        deferred.complete(cleanResponse(sb.toString(), enableThinking))
-                    }
-                }
-
-                session.generateResponseAsync(listener)
-                val res = withTimeoutOrNull(90_000) { deferred.await() }
-                if (res != null) return@withContext res
-                return@withContext cleanResponse(sb.toString(), enableThinking)
-            } finally {
-                try { session.cancelGenerateResponseAsync() } catch (_: Throwable) {}
-                try { session.close() } catch (_: Throwable) {}
-                if (activeSession === session) {
-                    activeSession = null
-                }
-            }
-        }
-    }
-
-    suspend fun generateResponseWithImage(
-        context: Context,
-        uri: Uri,
-        prompt: String,
-        enableThinking: Boolean = false,
-        systemPrompt: String? = null,
-        temperature: Float = 0.1f,
-        topK: Int = 1,
-        topP: Float = 0.95f,
-        onTokenStream: ((String, String?) -> Unit)? = null
-    ): Pair<String, String?> = withContext(Dispatchers.IO) {
-        val bitmap = context.contentResolver.openInputStream(uri)?.use { stream ->
-            BitmapFactory.decodeStream(stream)
-        } ?: throw IllegalArgumentException("Cannot decode image from uri: $uri")
-        return@withContext generateResponseWithImage(bitmap, prompt, enableThinking, systemPrompt, temperature, topK, topP, onTokenStream)
-    }
-
-    suspend fun generateResponseWithImage(
-        imageBytes: ByteArray,
-        prompt: String,
-        enableThinking: Boolean = false,
-        systemPrompt: String? = null
-    ): Pair<String, String?> = withContext(Dispatchers.Default) {
-        val bitmap = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
-        if (bitmap != null) {
-            return@withContext generateResponseWithImage(bitmap, prompt, enableThinking, systemPrompt)
-        }
-        return@withContext generateResponse(prompt, enableThinking, systemPrompt)
-    }
-
-    suspend fun generateResponseWithImage(imageBytes: ByteArray, prompt: String): String = withContext(Dispatchers.Default) {
-        generateResponseWithImage(imageBytes, prompt, enableThinking = false, systemPrompt = null).first
-    }
-
-    private fun scaleBitmapToMaxDimension(bitmap: Bitmap, maxDim: Int): Bitmap {
-        val width = bitmap.width
-        val height = bitmap.height
-        if (width <= maxDim && height <= maxDim) return bitmap
-        val ratio = width.toFloat() / height.toFloat()
-        val targetWidth: Int
-        val targetHeight: Int
-        if (width > height) {
-            targetWidth = maxDim
-            targetHeight = (maxDim / ratio).toInt().coerceAtLeast(1)
-        } else {
-            targetHeight = maxDim
-            targetWidth = (maxDim * ratio).toInt().coerceAtLeast(1)
-        }
-        return Bitmap.createScaledBitmap(bitmap, targetWidth, targetHeight, true)
-    }
-
-    private fun tryAddImageToSession(session: LlmInferenceSession, bitmap: Bitmap): Boolean {
-        return try {
-            val builderClass = Class.forName("com.google.mediapipe.framework.image.BitmapImageBuilder")
-            val constructor = builderClass.getConstructor(Bitmap::class.java)
-            val builderInstance = constructor.newInstance(bitmap)
-            val buildMethod = builderClass.getMethod("build")
-            val mpImage = buildMethod.invoke(builderInstance)
-
-            val addImageMethod = session.javaClass.methods.firstOrNull { it.name == "addImage" && it.parameterTypes.size == 1 }
-            if (addImageMethod != null && mpImage != null) {
-                addImageMethod.invoke(session, mpImage)
-                Log.d("LocalAiManager", "Direct vision MPImage successfully added to session!")
-                true
-            } else {
-                Log.w("LocalAiManager", "session.addImage method not found")
-                false
-            }
-        } catch (t: Throwable) {
-            Log.w("LocalAiManager", "tryAddImageToSession reflection error: ${t.message}")
-            false
-        }
-    }
-
-    fun unloadFromRam() {
-        try {
-            Log.d("LocalAiManager", "Unloading AI Model from RAM...")
-            llmInference = null
-            System.gc()
-        } catch (_: Exception) {}
-        checkModelStatus()
-    }
-
-    fun deleteModel() {
-        unloadFromRam()
-        if (modelFile.exists()) {
-            modelFile.delete()
-        }
-        _status.value = ModelStatus.NotDownloaded
-    }
-}

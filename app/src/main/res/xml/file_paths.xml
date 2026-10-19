@@ -2,4 +2,5 @@
 <paths>
     <cache-path name="processed" path="processed/" />
     <cache-path name="camera" path="camera/" />
+    <cache-path name="ai" path="ai/" />
 </paths>

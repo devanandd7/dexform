@@ -96,4 +96,42 @@
     <string name="settings_clear_data">Clear browsing data</string>
     <string name="settings_privacy_note">DexForm processes your files on your phone. Nothing is uploaded except what you choose to submit on a website.</string>
     <string name="settings_app_version">App version</string>
+
+    <!-- Ask Image & AI Chat -->
+    <string name="ask_image_title">Ask Image</string>
+    <string name="model_name">Gemma-4-E2B-it</string>
+    <string name="model_ready">Ready</string>
+    <string name="model_loading">Starting AI: loading model...</string>
+    <string name="model_unloaded">Unloaded</string>
+    <string name="model_busy">Generating...</string>
+    <string name="model_on_gpu">Model on GPU</string>
+    <string name="model_on_cpu">Model on CPU</string>
+    <string name="new_chat">New chat</string>
+    <string name="settings_dialog_title">Settings</string>
+    <string name="photo_library">Photo library</string>
+    <string name="camera">Camera</string>
+    <string name="type_prompt">Type prompt...</string>
+    <string name="empty_chat_title">Ask anything about a photo</string>
+    <string name="empty_chat_subtitle">Add a photo with + and type your question</string>
+    <string name="copy_text">Copy</string>
+    <string name="copied_to_clipboard">Copied to clipboard</string>
+    <string name="taking_too_long">This is taking too long. Try again.</string>
+    <string name="retry">Retry</string>
+    <string name="stop">Stop</string>
+    <string name="send">Send</string>
+    <string name="you">You</string>
+    <string name="new_image_divider">New image</string>
+    <string name="extract_details_default">Extract details</string>
+
+    <!-- Debug & Self-tests -->
+    <string name="debug_title">AI Engine Debug &amp; Self-Tests</string>
+    <string name="text_selftest_title">Text Self-Test</string>
+    <string name="text_selftest_desc">Prompt: \"Reply with the single word OK.\"</string>
+    <string name="vision_selftest_title">Vision Self-Test</string>
+    <string name="vision_selftest_desc">Prompt: \"DEXFORM\" word verification in vision_test.png</string>
+    <string name="run_selftests">Run Self-Tests</string>
+    <string name="unload_model">Unload Model</string>
+    <string name="reload_model">Reload Model</string>
+    <string name="attach_photo">Attach photo</string>
+    <string name="remove_image">Remove image</string>
 </resources>

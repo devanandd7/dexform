@@ -33,12 +33,15 @@ android {
         }
     }
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_11
-        targetCompatibility JavaVersion.VERSION_11
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
     }
     kotlinOptions {
-        jvmTarget = '11'
-        freeCompilerArgs += ["-opt-in=androidx.compose.material3.ExperimentalMaterial3Api"]
+        jvmTarget = '17'
+        freeCompilerArgs += [
+            "-opt-in=androidx.compose.material3.ExperimentalMaterial3Api",
+            "-Xskip-metadata-version-check"
+        ]
     }
     buildFeatures {
         compose true
@@ -50,6 +53,9 @@ android {
         resources {
             excludes += '/META-INF/{AL2.0,LGPL2.1}'
         }
+        jniLibs {
+            pickFirsts += '**/liblitertlm_jni.so'
+        }
     }
 }
 
@@ -58,7 +64,7 @@ dependencies {
     implementation libs.androidx.appcompat
     implementation libs.material
 
-    implementation platform(libs.compose.bom)
+    implementation enforcedPlatform(libs.compose.bom)
     implementation libs.compose.ui
     implementation libs.compose.ui.graphics
     implementation libs.compose.ui.tooling.preview
@@ -87,8 +93,7 @@ dependencies {
     implementation libs.image.cropper
 
     implementation libs.mlkit.text.recognition
-    implementation libs.mediapipe.tasks.genai
-    implementation libs.mediapipe.tasks.vision
+    implementation libs.litertlm
 
     testImplementation libs.junit
     androidTestImplementation libs.androidx.test.ext
@@ -98,3 +103,4 @@ dependencies {
     debugImplementation libs.compose.ui.tooling
     debugImplementation libs.compose.ui.test.manifest
 }
+

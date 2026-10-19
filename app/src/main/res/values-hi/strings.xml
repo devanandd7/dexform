@@ -96,4 +96,42 @@
     <string name="settings_clear_data">ब्राउज़िंग डेटा साफ़ करें</string>
     <string name="settings_privacy_note">DexForm आपकी फ़ाइलों को आपके फोन पर ही प्रोसेस करता है। जब तक आप किसी वेबसाइट पर सबमिट न करें, कुछ भी अपलोड नहीं होता है।</string>
     <string name="settings_app_version">ऐप संस्करण</string>
+
+    <!-- Ask Image & AI Chat -->
+    <string name="ask_image_title">आस्क इमेज</string>
+    <string name="model_name">Gemma-4-E2B-it</string>
+    <string name="model_ready">तैयार</string>
+    <string name="model_loading">AI प्रारंभ हो रहा है: मॉडल लोड हो रहा है...</string>
+    <string name="model_unloaded">अनलोड किया गया</string>
+    <string name="model_busy">जनरेट हो रहा है...</string>
+    <string name="model_on_gpu">Model on GPU</string>
+    <string name="model_on_cpu">Model on CPU</string>
+    <string name="new_chat">नई चैट</string>
+    <string name="settings_dialog_title">सेटिंग्स</string>
+    <string name="photo_library">फ़ोटो लाइब्रेरी</string>
+    <string name="camera">कैमरा</string>
+    <string name="type_prompt">प्रॉम्प्ट लिखें...</string>
+    <string name="empty_chat_title">फ़ोटो के बारे में कुछ भी पूछें</string>
+    <string name="empty_chat_subtitle">+ से फ़ोटो जोड़ें और अपना प्रश्न लिखें</string>
+    <string name="copy_text">कॉपी करें</string>
+    <string name="copied_to_clipboard">क्लिपबोर्ड पर कॉपी किया गया</string>
+    <string name="taking_too_long">इसमें बहुत अधिक समय लग रहा है। पुनः प्रयास करें।</string>
+    <string name="retry">पुनः प्रयास करें</string>
+    <string name="stop">रोकें</string>
+    <string name="send">भेजें</string>
+    <string name="you">आप</string>
+    <string name="new_image_divider">नई इमेज</string>
+    <string name="extract_details_default">विवरण निकालें</string>
+
+    <!-- Debug & Self-tests -->
+    <string name="debug_title">AI इंजन डिबग और सेल्फ़-टेस्ट</string>
+    <string name="text_selftest_title">टेक्स्ट सेल्फ़-टेस्ट</string>
+    <string name="text_selftest_desc">प्रॉम्प्ट: \"Reply with the single word OK.\"</string>
+    <string name="vision_selftest_title">विज़न सेल्फ़-टेस्ट</string>
+    <string name="vision_selftest_desc">प्रॉम्प्ट: vision_test.png में \"DEXFORM\" शब्द सत्यापन</string>
+    <string name="run_selftests">सेल्फ़-टेस्ट चलाएं</string>
+    <string name="unload_model">मॉडल अनलोड करें</string>
+    <string name="reload_model">मॉडल पुनः लोड करें</string>
+    <string name="attach_photo">फ़ोटो संलग्न करें</string>
+    <string name="remove_image">छवि हटाएं</string>
 </resources>

@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.util.Log
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -16,8 +17,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withTimeout
-import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.FileOutputStream
 
 sealed interface ModelState {
     object Unloaded : ModelState
@@ -28,127 +29,212 @@ sealed interface ModelState {
 }
 
 class AiSession(
-    private val ai: LocalAiManager,
+    val ai: LocalAiManager,
     private val appScope: CoroutineScope,
     private val ctx: Context
 ) {
-    private val mutex = Mutex()
+    companion object {
+        private const val TAG = "AiSession"
+        const val RUN_VISION_SELFTEST = true
+        private const val MIN_REQUIRED_RAM_BYTES = 1_000_000_000L // 1 GB free RAM requirement
+    }
+
+    private val sessionMutex = Mutex()
     private var loadJob: Job? = null
     private var genJob: Job? = null
 
     @Volatile
-    private var wantLoaded = false
+    private var isScreenActive = false
 
     private val _state = MutableStateFlow<ModelState>(ModelState.Unloaded)
     val state: StateFlow<ModelState> = _state.asStateFlow()
 
+    // Test results tracking for debug UI
+    var lastTextTestLatencyMs: Long = 0L
+        private set
+    var lastVisionTestLatencyMs: Long = 0L
+        private set
+    var lastTextTestResult: String = ""
+        private set
+    var lastVisionTestResult: String = ""
+        private set
+
+    /**
+     * Called when the screen opens or comes to the foreground.
+     */
     fun onEnter() {
-        if (ai.isLoadedInRam) {
-            _state.value = ModelState.Ready
-        } else if (_state.value !is ModelState.Loading && _state.value !is ModelState.Busy) {
-            _state.value = ModelState.Unloaded
+        Log.d(TAG, "onEnter() called")
+        isScreenActive = true
+
+        if (_state.value is ModelState.Ready && ai.isLoaded) {
+            return
         }
+
+        if (_state.value is ModelState.Loading || _state.value is ModelState.Busy) {
+            return
+        }
+
+        startLoadAndSelfTest()
     }
 
+    /**
+     * Called when the screen closes or goes to background.
+     */
     fun onLeave() {
-        // Can remain loaded or unloaded per user preference; cancel active operations if leaving
+        Log.d(TAG, "onLeave() called")
+        isScreenActive = false
+
+        // Cancel in-flight generation
+        ai.cancelGeneration()
         genJob?.cancel()
     }
 
-    fun loadModelToRam() {
-        if (_state.value is ModelState.Loading || _state.value is ModelState.Busy) return
-        wantLoaded = true
-        startLoad()
+    /**
+     * Manual reload or retry triggered by user.
+     */
+    fun retryLoad() {
+        isScreenActive = true
+        startLoadAndSelfTest()
     }
 
-    fun unloadFromRam() {
-        wantLoaded = false
-        genJob?.cancel()
+    /**
+     * Explicit unload from RAM (for debugging or manual control).
+     */
+    fun unloadModel() {
+        Log.d(TAG, "unloadModel() called explicitly")
         loadJob?.cancel()
+        genJob?.cancel()
+        ai.cancelGeneration()
+
         appScope.launch(Dispatchers.Default) {
-            mutex.withLock {
-                ai.unloadFromRam()
+            sessionMutex.withLock {
+                try {
+                    ai.unload()
+                } catch (e: Exception) {
+                    Log.w(TAG, "Exception during unloadModel: ${e.message}")
+                }
                 _state.value = ModelState.Unloaded
+                Log.d(TAG, "Unload complete")
             }
         }
     }
 
-    private fun startLoad() {
+    private fun startLoadAndSelfTest() {
+        loadJob?.cancel()
         loadJob = appScope.launch(Dispatchers.Default) {
-            mutex.withLock {
+            sessionMutex.withLock {
+                if (!isScreenActive) {
+                    _state.value = ModelState.Unloaded
+                    return@withLock
+                }
+
                 try {
-                    _state.value = ModelState.Loading("Checking available RAM")
-                    requireFreeRam(ctx, neededBytes = 1_000_000_000L)
+                    // Step 1: Memory & file check
+                    _state.value = ModelState.Loading("Checking available RAM and model file...")
+                    checkAvailableRam(MIN_REQUIRED_RAM_BYTES)
 
-                    _state.value = ModelState.Loading("Loading model weights into RAM...")
-                    val loaded = ai.loadModelIntoRam()
-                    if (!loaded) {
-                        val status = ai.status.value
-                        val msg = if (status is ModelStatus.Error) status.message else "Failed to load model file into RAM."
-                        throw IllegalStateException(msg)
+                    val modelFile = ai.findGemmaModelFile()
+                    if (modelFile == null || !modelFile.exists() || modelFile.length() < LocalAiManager.MIN_MODEL_SIZE_BYTES) {
+                        throw IllegalStateException(
+                            "Gemma 4 E2B model file (${LocalAiManager.MODEL_FILE_NAME}) not found or size < 500MB. Please place it in app storage."
+                        )
                     }
 
-                    if (wantLoaded) {
-                        _state.value = ModelState.Ready
-                    } else {
-                        ai.unloadFromRam()
+                    if (!isScreenActive) {
                         _state.value = ModelState.Unloaded
+                        return@withLock
                     }
+
+                    // Step 2: Initialize engine
+                    _state.value = ModelState.Loading("Initializing LiteRT-LM engine (${ai.realBackend})...")
+                    val loaded = ai.load(preferredAccelerator = "GPU")
+                    if (!loaded) {
+                        throw IllegalStateException("Failed to initialize LiteRT-LM engine on both GPU and CPU fallback.")
+                    }
+
+                    ai.resetConversation()
+                    _state.value = ModelState.Ready
+                    Log.i(TAG, "AiSession is now Ready! Backend: ${ai.realBackend}")
+
+                    // Optional warm-up / self-test in background if not already measured
+                    if (lastTextTestLatencyMs == 0L) {
+                        try {
+                            val textStart = System.currentTimeMillis()
+                            val textAnswer = ai.generateOneShot("Reply with the single word OK.", timeoutMs = 25_000L)
+                            lastTextTestLatencyMs = System.currentTimeMillis() - textStart
+                            lastTextTestResult = textAnswer
+                            Log.i(TAG, "Warm-up self-test response: '$textAnswer' in ${lastTextTestLatencyMs}ms")
+                        } catch (t: Throwable) {
+                            Log.w(TAG, "Warm-up text check note: ${t.message}")
+                        }
+                    }
+
                 } catch (e: CancellationException) {
-                    ai.unloadFromRam()
+                    Log.i(TAG, "Loading job cancelled")
                     _state.value = ModelState.Unloaded
                     throw e
-                } catch (e: Exception) {
-                    ai.unloadFromRam()
-                    _state.value = ModelState.Error(e.message ?: "Model failed to load")
+                } catch (e: Throwable) {
+                    Log.e(TAG, "Failed during model load: ${e.message}", e)
+                    ai.unload()
+                    _state.value = ModelState.Error(e.message ?: "Failed to initialize AI model")
                 }
             }
         }
     }
 
-    fun runExclusive(block: suspend () -> Unit) {
-        if (_state.value != ModelState.Ready) return
-        genJob = appScope.launch(Dispatchers.Default) {
-            mutex.withLock {
-                _state.value = ModelState.Busy
-                try {
-                    block()
-                } finally {
-                    if (wantLoaded && _state.value == ModelState.Busy) {
-                        _state.value = ModelState.Ready
-                    }
-                }
-            }
+    fun setBusy() {
+        if (_state.value is ModelState.Ready) {
+            _state.value = ModelState.Busy
         }
     }
 
-    private fun requireFreeRam(context: Context, neededBytes: Long) {
-        val am = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+    fun setReady() {
+        if (isScreenActive && (_state.value is ModelState.Busy || _state.value is ModelState.Ready)) {
+            _state.value = ModelState.Ready
+        }
+    }
+
+    private fun checkAvailableRam(neededBytes: Long) {
+        val am = ctx.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
         val memInfo = ActivityManager.MemoryInfo()
         am?.getMemoryInfo(memInfo)
-        if (memInfo.availMem < neededBytes) {
-            throw IllegalStateException("Insufficient free RAM (${memInfo.availMem / (1024 * 1024)} MB available). Close other apps and retry.")
+        val freeBytes = memInfo.availMem
+        if (freeBytes < neededBytes) {
+            val freeMb = freeBytes / (1024 * 1024)
+            throw IllegalStateException("Insufficient free RAM ($freeMb MB available). At least 1 GB is required.")
         }
     }
 
-    private fun getOrCreateVisionTestPng(): ByteArray {
+    private fun getOrCreateVisionTestFile(): File {
+        val cacheFile = File(ctx.cacheDir, "vision_test.png")
+        if (cacheFile.exists() && cacheFile.length() > 0) {
+            return cacheFile
+        }
+
         try {
             ctx.assets.open("vision_test.png").use { input ->
-                return input.readBytes()
+                FileOutputStream(cacheFile).use { output ->
+                    input.copyTo(output)
+                }
+            }
+            if (cacheFile.exists() && cacheFile.length() > 0) {
+                return cacheFile
             }
         } catch (_: Exception) {}
 
-        val bmp = Bitmap.createBitmap(200, 60, Bitmap.Config.ARGB_8888)
+        // Fallback: generate programmatically if asset missing
+        val bmp = Bitmap.createBitmap(300, 100, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bmp)
         canvas.drawColor(Color.WHITE)
         val paint = Paint().apply {
             color = Color.BLACK
-            textSize = 28f
+            textSize = 36f
             isAntiAlias = true
         }
-        canvas.drawText("DEXFORM", 20f, 40f, paint)
-        val stream = ByteArrayOutputStream()
-        bmp.compress(Bitmap.CompressFormat.PNG, 100, stream)
-        return stream.toByteArray()
+        canvas.drawText("DEXFORM", 50f, 60f, paint)
+        FileOutputStream(cacheFile).use { out ->
+            bmp.compress(Bitmap.CompressFormat.PNG, 100, out)
+        }
+        return cacheFile
     }
 }

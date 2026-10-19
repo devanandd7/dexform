@@ -298,7 +298,11 @@ fun SettingsScreen(onBack: () -> Unit = {}) {
                                         Text("Test AI Prompt")
                                     }
                                     OutlinedButton(
-                                        onClick = { localAi.unloadFromRam() },
+                                        onClick = {
+                                            scope.launch {
+                                                localAi.unloadFromRam()
+                                            }
+                                        },
                                         modifier = Modifier.weight(1f)
                                     ) {
                                         Text("Unload RAM")
@@ -540,7 +544,7 @@ fun SettingsScreen(onBack: () -> Unit = {}) {
                                 aiGenerating = true
                                 aiResponseText = ""
                                 try {
-                                    val res = localAi.generateResponse(testPromptInput)
+                                    val res = localAi.generateResponse(testPromptInput).first
                                     aiResponseText = res
                                 } catch (e: Exception) {
                                     aiResponseText = "Error: ${e.message}"

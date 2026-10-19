@@ -63,7 +63,7 @@ object MultimodalFormAnalyzer {
         """.trimIndent()
 
         val aiSummary = try {
-            localAiManager.generateResponse(prompt)
+            localAiManager.generateResponse(prompt).first
         } catch (_: Exception) {
             "Form requirement parsed: $correctedText"
         }

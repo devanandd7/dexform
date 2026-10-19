@@ -11,6 +11,8 @@
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <application
         android:name="com.dexform.app.App"
@@ -23,6 +25,13 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.DexForm"
         android:usesCleartextTraffic="false">
+
+        <uses-native-library android:name="libvndksupport.so" android:required="false"/>
+        <uses-native-library android:name="libOpenCL.so" android:required="false"/>
+        <uses-native-library android:name="libcdsprpc.so" android:required="false" />
+        <uses-native-library android:name="libedgetpu_litert.so" android:required="false" />
+        <uses-native-library android:name="libedgetpu_util.so" android:required="false"/>
+        <uses-native-library android:name="libedgetpu_client.google.so" android:required="false"/>
 
         <activity
             android:name="com.dexform.app.MainActivity"
