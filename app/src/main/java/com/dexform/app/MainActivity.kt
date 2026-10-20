@@ -43,6 +43,8 @@ import com.dexform.app.ui.settings.SettingsScreen
 import com.dexform.app.ui.theme.DexFormTheme
 import com.dexform.app.ui.tools.ToolsScreen
 
+import androidx.compose.ui.text.style.TextOverflow
+
 sealed class BottomNavItem(
     val route: String,
     val titleRes: Int,
@@ -84,9 +86,8 @@ fun DexFormApp() {
         bottomBar = {
             if (isBottomBarVisible) {
                 NavigationBar(
-                    modifier = Modifier.height(64.dp),
                     containerColor = MaterialTheme.colorScheme.surface,
-                    tonalElevation = 6.dp
+                    tonalElevation = 4.dp
                 ) {
                     navItems.forEach { item ->
                         val selected = currentRoute == item.route
@@ -95,13 +96,15 @@ fun DexFormApp() {
                                 Icon(
                                     item.icon,
                                     contentDescription = stringResource(item.titleRes),
-                                    modifier = Modifier.size(20.dp)
+                                    modifier = Modifier.size(24.dp)
                                 )
                             },
                             label = {
                                 Text(
                                     text = stringResource(item.titleRes),
-                                    fontSize = 11.sp
+                                    fontSize = 11.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             },
                             selected = selected,
