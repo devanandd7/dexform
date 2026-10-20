@@ -90,6 +90,11 @@ import com.dexform.app.data.media.MediaItem
 import com.dexform.app.util.formatDuration
 import com.dexform.app.util.formatFileSize
 
+import com.dexform.app.data.media.MediaManager
+import com.dexform.app.data.media.RenameResult
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material.icons.outlined.Edit
+
 enum class FilterType {
     ALL, UNDER_50KB, UNDER_200KB, OVER_1MB
 }
@@ -111,43 +116,40 @@ fun PhotosScreen(
     var viewingImageIndex by remember { mutableStateOf<Int?>(null) }
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
     var itemsToDelete by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
+
+    var showRenameFileDialog by remember { mutableStateOf(false) }
+    var itemToRename by remember { mutableStateOf<MediaItem?>(null) }
+    var renameFileInput by remember { mutableStateOf("") }
+    var pendingAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+
     val isSelectionMode = selectedItemIds.isNotEmpty()
 
-    // MediaStore Deletion Launcher
-    val deleteRequestLauncher = rememberLauncherForActivityResult(
+    // Activity Result Launcher for Deletions and Renames
+    val intentSenderLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartIntentSenderForResult()
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
+            pendingAction?.invoke()
+            pendingAction = null
             mediaRepo.refresh()
             selectedItemIds = emptySet()
             if (viewingImageIndex != null) {
                 viewingImageIndex = null
             }
-            Toast.makeText(context, "Deleted successfully", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "Completed successfully", Toast.LENGTH_SHORT).show()
+        } else {
+            pendingAction = null
+            Toast.makeText(context, "Action cancelled", Toast.LENGTH_SHORT).show()
         }
     }
 
     fun executeDelete(items: List<MediaItem>) {
         if (items.isEmpty()) return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            try {
-                val uris = items.map { it.uri }
-                val pi = MediaStore.createDeleteRequest(context.contentResolver, uris)
-                val request = IntentSenderRequest.Builder(pi.intentSender).build()
-                deleteRequestLauncher.launch(request)
-            } catch (e: Exception) {
-                e.printStackTrace()
-                Toast.makeText(context, "Error initiating deletion: ${e.message}", Toast.LENGTH_SHORT).show()
-            }
+        val intentRequest = MediaManager.createDeleteIntentRequest(context, items)
+        if (intentRequest != null) {
+            intentSenderLauncher.launch(intentRequest)
         } else {
-            var count = 0
-            items.forEach { item ->
-                try {
-                    count += context.contentResolver.delete(item.uri, null, null)
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
-            }
+            val count = MediaManager.directDelete(context, items)
             if (count > 0) {
                 mediaRepo.refresh()
                 selectedItemIds = emptySet()
@@ -155,6 +157,23 @@ fun PhotosScreen(
                     viewingImageIndex = null
                 }
                 Toast.makeText(context, "Deleted $count photo(s)", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    fun executeRenameFile(item: MediaItem, newBaseName: String) {
+        if (newBaseName.isBlank()) return
+        when (val result = MediaManager.prepareRenameFile(context, item, newBaseName)) {
+            is RenameResult.Success -> {
+                mediaRepo.refresh()
+                Toast.makeText(context, "Photo renamed to ${result.newName}", Toast.LENGTH_SHORT).show()
+            }
+            is RenameResult.RequiresPermission -> {
+                pendingAction = result.pendingAction
+                intentSenderLauncher.launch(result.request)
+            }
+            is RenameResult.Error -> {
+                Toast.makeText(context, result.message, Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -233,6 +252,18 @@ fun PhotosScreen(
                 },
                 actions = {
                     if (isSelectionMode) {
+                        if (selectedItemIds.size == 1) {
+                            val item = mediaItems.firstOrNull { it.id in selectedItemIds }
+                            if (item != null) {
+                                IconButton(onClick = {
+                                    itemToRename = item
+                                    renameFileInput = item.displayName.substringBeforeLast('.')
+                                    showRenameFileDialog = true
+                                }) {
+                                    Icon(Icons.Outlined.Edit, contentDescription = "Rename Photo")
+                                }
+                            }
+                        }
                         IconButton(onClick = {
                             val selectedItems = mediaItems.filter { it.id in selectedItemIds }
                             if (selectedItems.isNotEmpty()) {
@@ -518,6 +549,75 @@ fun PhotosScreen(
             onDelete = { item ->
                 itemsToDelete = listOf(item)
                 showDeleteConfirmDialog = true
+            },
+            onRename = { item ->
+                itemToRename = item
+                renameFileInput = item.displayName.substringBeforeLast('.')
+                showRenameFileDialog = true
+            }
+        )
+    }
+
+    // Rename File Dialog
+    if (showRenameFileDialog && itemToRename != null) {
+        val item = itemToRename!!
+        val ext = item.displayName.substringAfterLast('.', "")
+        AlertDialog(
+            onDismissRequest = {
+                showRenameFileDialog = false
+                itemToRename = null
+            },
+            title = { Text("Rename Photo") },
+            text = {
+                Column {
+                    Text(
+                        "Enter new name for this photo:",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = renameFileInput,
+                        onValueChange = { renameFileInput = it },
+                        singleLine = true,
+                        label = { Text("File Name") },
+                        trailingIcon = {
+                            if (ext.isNotEmpty()) {
+                                Text(
+                                    text = ".$ext",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(end = 12.dp)
+                                )
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val input = renameFileInput.trim()
+                        showRenameFileDialog = false
+                        val target = itemToRename
+                        itemToRename = null
+                        if (target != null && input.isNotBlank()) {
+                            executeRenameFile(target, input)
+                        }
+                    }
+                ) {
+                    Text("Rename")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showRenameFileDialog = false
+                        itemToRename = null
+                    }
+                ) {
+                    Text("Cancel")
+                }
             }
         )
     }
@@ -567,4 +667,5 @@ fun PhotosScreen(
         )
     }
 }
+
 

@@ -51,13 +51,20 @@ class MediaRepository(private val context: Context) {
             val items = loadMediaFromMediaStore()
             _mediaItems.value = items
 
-            val allAlbumList = groupIntoAlbums(items)
-            _albums.value = allAlbumList
+            val allAlbumList = groupIntoAlbums(items).toMutableList()
 
             // Filter ONLY DexForm project-related albums and cache outputs
             val dexFormItems = loadDexFormProjectMedia(items)
             val dexFormAlbumList = groupDexFormAlbums(dexFormItems)
             _dexFormAlbums.value = dexFormAlbumList
+
+            // Also ensure any non-MediaStore DexForm albums (like processed tool outputs) are included in allAlbumList
+            for (dfAlbum in dexFormAlbumList) {
+                if (allAlbumList.none { it.bucketId == dfAlbum.bucketId }) {
+                    allAlbumList.add(0, dfAlbum)
+                }
+            }
+            _albums.value = allAlbumList
         }
     }
 

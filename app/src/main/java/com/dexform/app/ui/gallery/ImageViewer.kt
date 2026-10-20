@@ -31,6 +31,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.Button
@@ -71,6 +72,7 @@ fun ImageViewer(
     initialIndex: Int,
     onDismiss: () -> Unit,
     onDelete: ((MediaItem) -> Unit)? = null,
+    onRename: ((MediaItem) -> Unit)? = null,
     onOpenInTools: ((MediaItem) -> Unit)? = null
 ) {
     if (items.isEmpty() || initialIndex !in items.indices) {
@@ -182,6 +184,23 @@ fun ImageViewer(
                             contentDescription = "Share",
                             tint = Color.White
                         )
+                    }
+
+                    // Rename button in View Mode
+                    if (onRename != null) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        IconButton(
+                            onClick = { onRename(currentItem) },
+                            modifier = Modifier
+                                .size(40.dp)
+                                .background(Color.White.copy(alpha = 0.2f), CircleShape)
+                        ) {
+                            Icon(
+                                Icons.Outlined.Edit,
+                                contentDescription = "Rename",
+                                tint = Color.White
+                            )
+                        }
                     }
 
                     // Delete button in View Mode
