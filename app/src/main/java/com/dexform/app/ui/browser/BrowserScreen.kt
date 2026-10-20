@@ -144,14 +144,18 @@ fun BrowserScreen(
         isAutofilling = true
         scope.launch {
             try {
-                val rules = FormAutofillEngine.prepareAutofillRules(app.container, activeProfile)
-                val result = FormAutofillEngine.executeAutofill(webView, rules, overwriteExisting = overwrite)
+                val result = FormAutofillEngine.executeAiCognitiveAutofill(
+                    webView = webView,
+                    container = app.container,
+                    profile = activeProfile,
+                    overwriteExisting = overwrite
+                )
                 if (result.filledCount > 0) {
                     val preview = result.filledFields.take(4).joinToString(", ")
                     val extra = if (result.filledFields.size > 4) " +${result.filledFields.size - 4} more" else ""
                     Toast.makeText(
                         context,
-                        "⚡ Filled ${result.filledCount} fields ($preview$extra) using '${activeProfile.name}'",
+                        "⚡ AI Filled ${result.filledCount} fields ($preview$extra) using '${activeProfile.name}'",
                         Toast.LENGTH_LONG
                     ).show()
                 } else {
@@ -352,7 +356,7 @@ fun BrowserScreen(
                                 leadingIcon = {
                                     Icon(Icons.Outlined.AutoAwesome, contentDescription = null, tint = Color(0xFF2563EB))
                                 },
-                                text = { Text("Autofill Current Form") },
+                                text = { Text("⚡ AI Smart Autofill") },
                                 onClick = {
                                     showMenu = false
                                     performAutofill(overwrite = false)
@@ -362,7 +366,7 @@ fun BrowserScreen(
                                 leadingIcon = {
                                     Icon(Icons.Outlined.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                                 },
-                                text = { Text("Force Autofill (Overwrite All)") },
+                                text = { Text("Force AI Autofill (Overwrite)") },
                                 onClick = {
                                     showMenu = false
                                     performAutofill(overwrite = true)
@@ -454,7 +458,7 @@ fun BrowserScreen(
                             Icon(Icons.Outlined.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                if (isAutofilling) "Filling..." else "Autofill",
+                                if (isAutofilling) "Thinking..." else "⚡ AI Fill",
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 13.sp
                             )

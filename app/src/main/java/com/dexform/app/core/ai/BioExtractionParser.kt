@@ -3,6 +3,7 @@ package com.dexform.app.core.ai
 import com.dexform.app.data.db.Tier
 import com.dexform.app.data.db.UserProfileEntity
 import org.json.JSONObject
+import java.util.Locale
 
 object BioExtractionParser {
 
@@ -126,12 +127,23 @@ object BioExtractionParser {
 
         val detectedDocType = docType?.ifBlank { null } ?: inferDocType(trimmed, rawFields)
         val docTitle = formatDocTitle(detectedDocType)
+        val isPermanent = isPermanentPersonalDoc(detectedDocType)
 
-        // Convert to ProposedBioField objects
+        // 3. Mathematical Reasoning & Auto-Calculations for Academic Marksheets
+        performAcademicReasoning(detectedDocType, rawFields, trimmed)
+
+        // 4. Convert to ProposedBioField with contextual label normalization and smart tiering
         val proposedFields = rawFields.map { parsed ->
-            val cleanLabel = cleanLabel(parsed.label)
-            val tier = parsed.explicitTier ?: inferTier(cleanLabel, parsed.value)
-            val coreMatch = mapToCoreProfile(cleanLabel)
+            val cleanLabel = normalizeFieldLabel(parsed.label, detectedDocType)
+            val tier = if (isPermanent) {
+                // All fields of a permanent personal document (10th, 12th, Degree, PAN, Aadhaar) belong to Primary BIO
+                Tier.BIO
+            } else {
+                // For temporary docs (Admit card, exam slip), determine based on field identity
+                parsed.explicitTier ?: inferTemporaryDocTier(cleanLabel)
+            }
+
+            val coreMatch = mapToCoreProfile(cleanLabel, detectedDocType)
 
             val isDuplicate = if (coreMatch != null && currentProfile != null) {
                 val existingVal = getCoreValue(currentProfile, coreMatch)
@@ -166,8 +178,8 @@ object BioExtractionParser {
     }
 
     private data class ParsedField(
-        val label: String,
-        val value: String,
+        var label: String,
+        var value: String,
         val explicitTier: Tier?
     )
 
@@ -192,94 +204,229 @@ object BioExtractionParser {
     private fun inferDocType(text: String, fields: List<ParsedField>): String {
         val combined = (text + " " + fields.joinToString(" ") { "${it.label} ${it.value}" }).uppercase()
         return when {
-            combined.contains("EXPERIENCE") || combined.contains("EMPLOYMENT") || combined.contains("RELIEVING") -> "Experience Certificate"
+            combined.contains("ADMIT CARD") || combined.contains("HALL TICKET") || combined.contains("CALL LETTER") -> "Admit Card"
             combined.contains("INCOME TAX") || combined.contains("PERMANENT ACCOUNT") || combined.contains("PAN CARD") -> "PAN Card"
             combined.contains("AADHAAR") || combined.contains("UIDAI") -> "Aadhaar Card"
             combined.contains("DRIVING LICENCE") || combined.contains("DRIVING LICENSE") -> "Driving License"
             combined.contains("VOTER") || combined.contains("ELECTION") || combined.contains("EPIC") -> "Voter ID Card"
             combined.contains("PASSPORT") -> "Passport"
-            combined.contains("ADMIT CARD") || combined.contains("HALL TICKET") -> "Admit Card"
-            combined.contains("12TH") || combined.contains("INTERMEDIATE") || combined.contains("HIGHER SECONDARY") -> "12th Marksheet"
-            combined.contains("10TH") || combined.contains("MATRICULATION") || combined.contains("SECONDARY SCHOOL") -> "10th Marksheet"
-            combined.contains("DEGREE") || combined.contains("GRADUATION") || combined.contains("CONVOCATION") -> "Degree Certificate"
-            combined.contains("BONAFIDE") -> "Bonafide Certificate"
+            combined.contains("10TH") || combined.contains("MATRICULATION") || combined.contains("SECONDARY SCHOOL") || combined.contains("HIGH SCHOOL") -> "10th Marksheet"
+            combined.contains("12TH") || combined.contains("INTERMEDIATE") || combined.contains("HIGHER SECONDARY") || combined.contains("SENIOR SECONDARY") -> "12th Marksheet"
+            combined.contains("GRADUATION") || combined.contains("BACHELOR") || combined.contains("B.TECH") || combined.contains("B.SC") || combined.contains("B.COM") || combined.contains("B.A") -> "Degree Certificate"
+            combined.contains("MASTER") || combined.contains("POST GRADUATION") || combined.contains("M.TECH") || combined.contains("M.SC") || combined.contains("M.COM") || combined.contains("M.A") -> "Master's Degree"
+            combined.contains("DIPLOMA") || combined.contains("POLYTECHNIC") -> "Diploma Certificate"
+            combined.contains("EXPERIENCE") || combined.contains("EMPLOYMENT") || combined.contains("RELIEVING") -> "Experience Certificate"
             combined.contains("DOMICILE") || combined.contains("RESIDENTIAL") -> "Domicile Certificate"
             combined.contains("CASTE") || combined.contains("COMMUNITY") -> "Caste Certificate"
             else -> "Document"
         }
     }
 
-    private fun formatDocTitle(docType: String): String {
-        return docType.trim()
+    /**
+     * Permanent personal documents (Marksheets, Degrees, National IDs, Experience) are always Primary BIO.
+     * Temporary documents (Admit Cards, Hall Tickets, Exam Slips) are Sub-Bio.
+     */
+    fun isPermanentPersonalDoc(docType: String): Boolean {
+        val upper = docType.uppercase()
+        if (upper.contains("ADMIT") || upper.contains("HALL TICKET") || upper.contains("CALL LETTER") || upper.contains("EXAM SLIP")) {
+            return false
+        }
+        return true
     }
 
     /**
-     * Identifies if a field is Primary Bio (Permanent/Personal/Career) vs Sub-Bio (Document Instance)
+     * Normalizes generic labels into rich, context-aware labels.
+     * e.g. "Number" on PAN Card -> "PAN Card Number"
+     *      "Roll No" on 10th Marksheet -> "10th Roll Number"
      */
-    fun inferTier(label: String, value: String): Tier {
-        val norm = label.lowercase().replace(Regex("""[^a-z0-9]"""), "")
+    fun normalizeFieldLabel(label: String, docType: String): String {
+        val clean = cleanLabel(label)
+        val norm = clean.lowercase().replace(Regex("""[^a-z0-9]"""), "")
+        val docUpper = docType.uppercase()
 
-        // Sub-Bio indicators: Document / Exam instance-specific
-        if (norm.contains("certificateno") || norm.contains("certificatenumber") || norm.contains("certno") ||
-            norm.contains("serialno") || norm.contains("serialnumber") || norm.contains("referenceno") ||
-            norm.contains("issuedate") || norm.contains("dateofissue") || norm.contains("issuedon") ||
-            norm.contains("expirydate") || norm.contains("validtill") || norm.contains("validupto") ||
-            norm.contains("examdate") || norm.contains("examcenter") || norm.contains("venue") ||
-            norm.contains("rollno") || norm.contains("hallticket") || norm.contains("seatno") ||
-            norm.contains("applicationno") || norm.contains("registrationno") || norm.contains("regno") ||
-            norm.contains("enrollmentno") || norm.contains("marks") || norm.contains("score") ||
-            norm.contains("grade") || norm.contains("cgpa") || norm.contains("percentage") ||
-            norm.contains("session") || norm.contains("shift") || norm.contains("reportingtime")) {
-            return Tier.SUB
+        return when {
+            docUpper.contains("PAN") -> {
+                if (norm == "number" || norm == "no" || norm == "panno" || norm == "id" || norm == "pannumber") {
+                    "PAN Card Number"
+                } else clean
+            }
+            docUpper.contains("AADHAAR") -> {
+                if (norm == "number" || norm == "no" || norm == "uid" || norm == "vid" || norm == "aadhaarno") {
+                    "Aadhaar Number"
+                } else clean
+            }
+            docUpper.contains("VOTER") -> {
+                if (norm == "number" || norm == "no" || norm == "epic" || norm == "epicno" || norm == "voterid") {
+                    "Voter ID (EPIC) Number"
+                } else clean
+            }
+            docUpper.contains("DRIVING") || docUpper.contains("LICENSE") -> {
+                if (norm == "number" || norm == "no" || norm == "dlno" || norm == "licenseno") {
+                    "Driving License Number"
+                } else clean
+            }
+            docUpper.contains("10TH") || docUpper.contains("MATRIC") -> {
+                when {
+                    norm.contains("roll") -> "10th Roll Number"
+                    norm.contains("reg") || norm.contains("enroll") -> "10th Registration Number"
+                    norm.contains("year") || norm.contains("passing") -> "10th Passing Year"
+                    norm.contains("board") || norm.contains("council") -> "10th Board"
+                    norm.contains("percent") -> "10th Percentage"
+                    norm.contains("division") -> "10th Division"
+                    norm.contains("marks") || norm.contains("score") || norm.contains("total") -> "10th Total Marks"
+                    else -> clean
+                }
+            }
+            docUpper.contains("12TH") || docUpper.contains("INTER") -> {
+                when {
+                    norm.contains("roll") -> "12th Roll Number"
+                    norm.contains("reg") || norm.contains("enroll") -> "12th Registration Number"
+                    norm.contains("year") || norm.contains("passing") -> "12th Passing Year"
+                    norm.contains("board") || norm.contains("council") -> "12th Board"
+                    norm.contains("percent") -> "12th Percentage"
+                    norm.contains("division") -> "12th Division"
+                    norm.contains("marks") || norm.contains("score") || norm.contains("total") -> "12th Total Marks"
+                    else -> clean
+                }
+            }
+            else -> clean
         }
-
-        // Primary Bio indicators: Identity, Person, Career Profile
-        if (norm.contains("name") || norm.contains("dob") || norm.contains("birth") || norm.contains("age") ||
-            norm.contains("father") || norm.contains("mother") || norm.contains("gender") || norm.contains("sex") ||
-            norm.contains("category") || norm.contains("caste") || norm.contains("religion") || norm.contains("nationality") ||
-            norm.contains("mobile") || norm.contains("phone") || norm.contains("contact") || norm.contains("email") ||
-            norm.contains("address") || norm.contains("pincode") || norm.contains("city") || norm.contains("state") ||
-            norm.contains("pan") || norm.contains("aadhaar") || norm.contains("voter") || norm.contains("passport") ||
-            norm.contains("blood") || norm.contains("marital") ||
-            // Professional / Career Bio details:
-            norm.contains("company") || norm.contains("employer") || norm.contains("organization") ||
-            norm.contains("industry") || norm.contains("experience") || norm.contains("designation") ||
-            norm.contains("role") || norm.contains("position") || norm.contains("jobtitle") ||
-            norm.contains("skill") || norm.contains("qualification") || norm.contains("degree") ||
-            norm.contains("department") || norm.contains("domain")) {
-            return Tier.BIO
-        }
-
-        return Tier.BIO
     }
 
-    private fun mapToCoreProfile(label: String): String? {
-        val norm = label.lowercase().replace(Regex("""[^a-z0-9]"""), "")
-        return when {
-            norm == "name" || norm == "fullname" || norm == "candidatename" -> "name"
-            norm.contains("father") -> "fatherName"
-            norm.contains("mother") -> "motherName"
-            norm == "dob" || norm.contains("dateofbirth") || norm.contains("birthdate") -> "dob"
-            norm == "gender" || norm == "sex" -> "gender"
-            norm == "category" || norm == "caste" -> "category"
-            norm == "mobile" || norm == "phone" || norm == "contact" || norm == "mobileno" -> "mobile"
-            norm == "email" || norm.contains("emailaddress") -> "email"
-            norm == "address" || norm.contains("permanentaddress") -> "address"
-            norm.contains("idnumber") || norm.contains("pannumber") || norm.contains("aadhaarnumber") -> "idNumber"
-            norm.contains("10th") && norm.contains("roll") -> "tenthRollNo"
-            norm.contains("10th") && norm.contains("reg") -> "tenthRegNo"
-            norm.contains("10th") && (norm.contains("year") || norm.contains("passing")) -> "tenthPassingYear"
-            norm.contains("10th") && norm.contains("board") -> "tenthBoard"
-            norm.contains("10th") && (norm.contains("marks") || norm.contains("percent")) -> "tenthMarks"
-            norm.contains("10th") && norm.contains("division") -> "tenthDivision"
-            norm.contains("12th") && norm.contains("roll") -> "twelfthRollNo"
-            norm.contains("12th") && norm.contains("reg") -> "twelfthRegNo"
-            norm.contains("12th") && (norm.contains("year") || norm.contains("passing")) -> "twelfthPassingYear"
-            norm.contains("12th") && norm.contains("board") -> "twelfthBoard"
-            norm.contains("12th") && (norm.contains("marks") || norm.contains("percent")) -> "twelfthMarks"
-            norm.contains("12th") && norm.contains("division") -> "twelfthDivision"
-            else -> null
+    /**
+     * Performs math reasoning to compute Percentage and Division from Marks if not already present.
+     */
+    private fun performAcademicReasoning(docType: String, fields: MutableList<ParsedField>, fullText: String) {
+        val docUpper = docType.uppercase()
+        val isAcademic = docUpper.contains("10TH") || docUpper.contains("12TH") ||
+                docUpper.contains("MATRIC") || docUpper.contains("INTER") ||
+                docUpper.contains("MARKSHEET") || docUpper.contains("DEGREE")
+
+        if (!isAcademic) return
+
+        val prefix = if (docUpper.contains("12TH") || docUpper.contains("INTER")) "12th" else "10th"
+
+        var hasPercentage = fields.any { it.label.lowercase().contains("percent") }
+        var hasDivision = fields.any { it.label.lowercase().contains("division") }
+
+        // Look for marks patterns: e.g. "425/500", "425 out of 500", or separate Total Marks and Maximum Marks
+        var obtainedMarks: Double? = null
+        var maxMarks: Double? = null
+
+        // 1. Try finding fraction pattern in text (e.g. 425/500 or 425 / 500)
+        val fractionMatch = Regex("""(\d{2,4})\s*(?:/|out of)\s*(\d{2,4})""", RegexOption.IGNORE_CASE).find(fullText)
+        if (fractionMatch != null) {
+            val num1 = fractionMatch.groupValues[1].toDoubleOrNull()
+            val num2 = fractionMatch.groupValues[2].toDoubleOrNull()
+            if (num1 != null && num2 != null && num2 > 0 && num1 <= num2) {
+                obtainedMarks = num1
+                maxMarks = num2
+            }
         }
+
+        // 2. Check extracted fields if not found via fraction
+        if (obtainedMarks == null) {
+            val obtainedField = fields.firstOrNull {
+                val l = it.label.lowercase()
+                (l.contains("obtained") || l.contains("total marks") || l.contains("marks secured")) && !l.contains("max")
+            }
+            val maxField = fields.firstOrNull {
+                val l = it.label.lowercase()
+                l.contains("max") || l.contains("full marks") || l.contains("total marks")
+            }
+
+            val num1 = obtainedField?.value?.replace(Regex("""[^0-9.]"""), "")?.toDoubleOrNull()
+            val num2 = maxField?.value?.replace(Regex("""[^0-9.]"""), "")?.toDoubleOrNull()
+            if (num1 != null && num2 != null && num2 > num1) {
+                obtainedMarks = num1
+                maxMarks = num2
+            } else if (num1 != null && num1 in 200.0..600.0) {
+                obtainedMarks = num1
+                maxMarks = if (num1 <= 500.0) 500.0 else 600.0 // Standard Indian board total
+            }
+        }
+
+        // 3. Calculate Percentage if missing
+        var computedPct: Double? = null
+        if (!hasPercentage && obtainedMarks != null && maxMarks != null && maxMarks > 0) {
+            computedPct = (obtainedMarks / maxMarks) * 100.0
+            val pctString = String.format(Locale.US, "%.2f%%", computedPct)
+            fields.add(ParsedField("$prefix Percentage", pctString, explicitTier = Tier.BIO))
+            hasPercentage = true
+        } else if (hasPercentage) {
+            val pctField = fields.firstOrNull { it.label.lowercase().contains("percent") }
+            val rawNum = pctField?.value?.replace(Regex("""[^0-9.]"""), "")?.toDoubleOrNull()
+            if (rawNum != null) computedPct = rawNum
+        }
+
+        // 4. Derive Division if missing and percentage is available
+        if (!hasDivision && computedPct != null && computedPct in 1.0..100.0) {
+            val divisionString = when {
+                computedPct >= 60.0 -> "1st Division"
+                computedPct >= 45.0 -> "2nd Division"
+                computedPct >= 33.0 -> "3rd Division"
+                else -> "Passed"
+            }
+            fields.add(ParsedField("$prefix Division", divisionString, explicitTier = Tier.BIO))
+        }
+    }
+
+    private fun inferTemporaryDocTier(label: String): Tier {
+        val norm = label.lowercase().replace(Regex("""[^a-z0-9]"""), "")
+        // Identity details in temporary docs still map to personal bio
+        if (norm.contains("name") || norm.contains("dob") || norm.contains("father") ||
+            norm.contains("mother") || norm.contains("gender") || norm.contains("category") ||
+            norm.contains("mobile") || norm.contains("email") || norm.contains("address")) {
+            return Tier.BIO
+        }
+        return Tier.SUB
+    }
+
+    private fun mapToCoreProfile(label: String, docType: String): String? {
+        val norm = label.lowercase().replace(Regex("""[^a-z0-9]"""), "")
+        val docUpper = docType.uppercase()
+
+        // 1. Direct personal matches
+        if (norm == "name" || norm == "fullname" || norm == "candidatename" || norm == "applicantname") return "name"
+        if (norm.contains("father")) return "fatherName"
+        if (norm.contains("mother")) return "motherName"
+        if (norm == "dob" || norm.contains("dateofbirth") || norm.contains("birthdate")) return "dob"
+        if (norm == "gender" || norm == "sex") return "gender"
+        if (norm == "category" || norm == "caste") return "category"
+        if (norm == "mobile" || norm == "phone" || norm == "contact" || norm == "mobileno") return "mobile"
+        if (norm == "email" || norm.contains("emailaddress")) return "email"
+        if (norm == "address" || norm.contains("permanentaddress")) return "address"
+        if (norm.contains("idnumber") || norm.contains("pannumber") || norm.contains("aadhaarnumber")) return "idNumber"
+
+        // 2. 10th Academic
+        if (norm.contains("10th") || docUpper.contains("10TH") || docUpper.contains("MATRIC")) {
+            return when {
+                norm.contains("roll") -> "tenthRollNo"
+                norm.contains("reg") || norm.contains("enroll") -> "tenthRegNo"
+                norm.contains("year") || norm.contains("passing") -> "tenthPassingYear"
+                norm.contains("board") || norm.contains("council") -> "tenthBoard"
+                norm.contains("marks") || norm.contains("score") || norm.contains("total") -> "tenthMarks"
+                norm.contains("percent") -> "tenthMarks" // stored in tenthMarks if desired or dynamic bio
+                norm.contains("division") -> "tenthDivision"
+                else -> null
+            }
+        }
+
+        // 3. 12th Academic
+        if (norm.contains("12th") || docUpper.contains("12TH") || docUpper.contains("INTER")) {
+            return when {
+                norm.contains("roll") -> "twelfthRollNo"
+                norm.contains("reg") || norm.contains("enroll") -> "twelfthRegNo"
+                norm.contains("year") || norm.contains("passing") -> "twelfthPassingYear"
+                norm.contains("board") || norm.contains("council") -> "twelfthBoard"
+                norm.contains("marks") || norm.contains("score") || norm.contains("total") -> "twelfthMarks"
+                norm.contains("percent") -> "twelfthMarks"
+                norm.contains("division") -> "twelfthDivision"
+                else -> null
+            }
+        }
+
+        return null
     }
 
     private fun getCoreValue(profile: UserProfileEntity, fieldName: String): String {
@@ -308,6 +455,10 @@ object BioExtractionParser {
             "twelfthDivision" -> profile.twelfthDivision
             else -> ""
         }
+    }
+
+    private fun formatDocTitle(docType: String): String {
+        return docType.trim()
     }
 
     private fun slug(text: String): String {

@@ -101,9 +101,12 @@ import com.dexform.app.core.ai.ImageAiHelper
 import com.dexform.app.core.ai.LocalAiManager
 import com.dexform.app.core.ai.ModelState
 import com.dexform.app.core.ai.SaveToBioEngine
+import com.dexform.app.AppContainer
 import com.dexform.app.data.db.Tier
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 
 data class ChatItem(
@@ -894,21 +897,6 @@ fun AiChatScreen(
                                                     attachedImageFile = null
                                                     inputText = ""
 
-                                                    val promptToSend = if (imageToSend != null) {
-                                                        if (rawText.isBlank()) {
-                                                            "Please extract all details from this document accurately. Organize clearly as:\n" +
-                                                            "- Document Type: (e.g. Experience Certificate, PAN Card, Admit Card, Marksheet, etc.)\n" +
-                                                            "- Primary Bio (Permanent personal or career info: Name, Father's Name, DOB, Company Name, Industry, Designation, Experience, etc.):\n" +
-                                                            "  * Field: Value\n" +
-                                                            "- Sub-Bio (Document specific info: Certificate ID, Roll No, Issue Date, Expiry Date, Center, etc.):\n" +
-                                                            "  * Field: Value"
-                                                        } else {
-                                                            "$rawText\n\n[Please clearly list detected details like Document Type, Name, Company, Designation, Certificate ID, Issue Date, etc.]"
-                                                        }
-                                                    } else {
-                                                        rawText
-                                                    }
-
                                                     // Add user message
                                                     messages.add(
                                                         ChatItem(
@@ -934,10 +922,43 @@ fun AiChatScreen(
 
                                                     generationJob = scope.launch {
                                                         try {
+                                                            val profileContext = buildProfileContextPrompt(app.container)
+                                                            val promptToSend = if (imageToSend != null) {
+                                                                val extractionGuide = if (rawText.isBlank()) {
+                                                                    "Please analyze this document thoroughly and extract all details accurately. Follow these instructions carefully:\n" +
+                                                                    "1. TIER CLASSIFICATION:\n" +
+                                                                    "   - Academic Qualifications (10th/Matriculation, 12th/Intermediate, Degree, Diploma marksheet/certificate) and National IDs (PAN Card, Aadhaar, Voter ID, Driving License) MUST be classified as Primary Bio (Tier.BIO).\n" +
+                                                                    "   - Only single-use event or examination entry passes (Admit Cards, Hall Tickets, Exam Scorecards with expiration) belong to Sub-Bio (Tier.SUB).\n" +
+                                                                    "2. CONTEXTUAL FIELD NAMING:\n" +
+                                                                    "   - Do not use generic field labels like 'Number' or 'ID'. Use specific labels (e.g. 'PAN Card Number' for PAN card, '10th Roll Number' for 10th marksheet).\n" +
+                                                                    "3. MATHEMATICAL REASONING FOR MARKS:\n" +
+                                                                    "   - When Total/Max Marks and Obtained Marks are present, compute Percentage (obtained / total * 100) and Division (1st if >= 60%, 2nd if >= 45%, 3rd otherwise) if not already stated.\n\n" +
+                                                                    "Organize the output clearly as:\n" +
+                                                                    "- Document Type: (e.g. 10th Marksheet, PAN Card, Admit Card, Degree)\n" +
+                                                                    "- Primary Bio (Permanent personal or academic info):\n" +
+                                                                    "  * Field: Value\n" +
+                                                                    "- Sub-Bio (Document specific temporary slip info):\n" +
+                                                                    "  * Field: Value"
+                                                                } else {
+                                                                    "$rawText\n\n[Please extract all detected details like Document Type, Name, ID Number, Marks, Board, Roll No, etc. Marksheets, Degrees and National IDs belong in Primary Bio (Tier.BIO).]"
+                                                                }
+                                                                if (profileContext.isNotBlank()) {
+                                                                    "$profileContext\n$extractionGuide"
+                                                                } else {
+                                                                    extractionGuide
+                                                                }
+                                                            } else {
+                                                                if (profileContext.isNotBlank()) {
+                                                                    "$profileContext\nUser Query: $rawText\n\nAnswer the user's question accurately, smartly, and helpfully using their personal and sub-personal profile data provided above."
+                                                                } else {
+                                                                    rawText
+                                                                }
+                                                            }
+
                                                             localAi.sendMessageStream(
                                                                 text = promptToSend,
                                                                 imageFile = imageToSend,
-                                                                enableThinking = false
+                                                                enableThinking = true
                                                             ).collect { chunk ->
                                                                 val idx = messages.indexOfFirst { it.id == assistantId }
                                                                 if (idx != -1) {
@@ -1017,3 +1038,80 @@ fun AiChatScreen(
         }
     }
 }
+
+/**
+ * Builds a comprehensive context window containing all user personal (Tier.BIO)
+ * and sub-personal / document (Tier.SUB) data so the AI can answer user queries
+ * accurately and cross-reference information.
+ */
+private suspend fun buildProfileContextPrompt(container: AppContainer): String = withContext(Dispatchers.IO) {
+    try {
+        val profile = container.userProfileDao.getSelectedProfile() ?: return@withContext ""
+        val defMap = container.fieldDefDao.getApprovedDefs().associateBy { it.key }
+
+        val sb = StringBuilder()
+        sb.append("[USER PERSONAL & SUB-PERSONAL PROFILE DATA CONTEXT]\n")
+        sb.append("You are DexForm AI, an intelligent personal assistant and form-filling thinker. You have authorized and verified access to the user's active personal profile, academic records, and document details below.\n")
+        sb.append("When the user asks any question about their personal details, marks, IDs, qualifications, or documents, ALWAYS answer accurately and directly using this context. Think step-by-step and perform any required mathematical reasoning.\n\n")
+
+        sb.append("=== PRIMARY PERSONAL BIO (Tier.BIO) ===\n")
+        sb.append("• Full Name: ").append(profile.name).append("\n")
+        if (profile.fatherName.isNotBlank()) sb.append("• Father's Name: ").append(profile.fatherName).append("\n")
+        if (profile.motherName.isNotBlank()) sb.append("• Mother's Name: ").append(profile.motherName).append("\n")
+        if (profile.dob.isNotBlank()) sb.append("• Date of Birth (DOB): ").append(profile.dob).append("\n")
+        if (profile.gender.isNotBlank()) sb.append("• Gender: ").append(profile.gender).append("\n")
+        if (profile.category.isNotBlank()) sb.append("• Category/Caste: ").append(profile.category).append("\n")
+        if (profile.mobile.isNotBlank()) sb.append("• Mobile Number: ").append(profile.mobile).append("\n")
+        if (profile.email.isNotBlank()) sb.append("• Email Address: ").append(profile.email).append("\n")
+        if (profile.address.isNotBlank()) sb.append("• Permanent Address: ").append(profile.address).append("\n")
+        if (profile.idNumber.isNotBlank()) sb.append("• National ID (Aadhaar/PAN): ").append(profile.idNumber).append("\n")
+
+        if (profile.tenthRollNo.isNotBlank() || profile.tenthMarks.isNotBlank() || profile.tenthBoard.isNotBlank()) {
+            sb.append("• 10th / Matriculation Details:\n")
+            if (profile.tenthRollNo.isNotBlank()) sb.append("  - Roll No: ").append(profile.tenthRollNo).append("\n")
+            if (profile.tenthRegNo.isNotBlank()) sb.append("  - Reg No: ").append(profile.tenthRegNo).append("\n")
+            if (profile.tenthBoard.isNotBlank()) sb.append("  - Board: ").append(profile.tenthBoard).append("\n")
+            if (profile.tenthPassingYear.isNotBlank()) sb.append("  - Passing Year: ").append(profile.tenthPassingYear).append("\n")
+            if (profile.tenthMarks.isNotBlank()) sb.append("  - Marks / Percentage: ").append(profile.tenthMarks).append("\n")
+            if (profile.tenthDivision.isNotBlank()) sb.append("  - Division: ").append(profile.tenthDivision).append("\n")
+        }
+
+        if (profile.twelfthRollNo.isNotBlank() || profile.twelfthMarks.isNotBlank() || profile.twelfthBoard.isNotBlank()) {
+            sb.append("• 12th / Intermediate Details:\n")
+            if (profile.twelfthRollNo.isNotBlank()) sb.append("  - Roll No: ").append(profile.twelfthRollNo).append("\n")
+            if (profile.twelfthRegNo.isNotBlank()) sb.append("  - Reg No: ").append(profile.twelfthRegNo).append("\n")
+            if (profile.twelfthBoard.isNotBlank()) sb.append("  - Board: ").append(profile.twelfthBoard).append("\n")
+            if (profile.twelfthPassingYear.isNotBlank()) sb.append("  - Passing Year: ").append(profile.twelfthPassingYear).append("\n")
+            if (profile.twelfthMarks.isNotBlank()) sb.append("  - Marks / Percentage: ").append(profile.twelfthMarks).append("\n")
+            if (profile.twelfthDivision.isNotBlank()) sb.append("  - Division: ").append(profile.twelfthDivision).append("\n")
+        }
+
+        val bioValues = container.fieldValueDao.getBioValuesOnce(profile.id)
+        if (bioValues.isNotEmpty()) {
+            sb.append("• Additional Permanent Bio Attributes:\n")
+            for (bv in bioValues) {
+                val label = defMap[bv.fieldKey]?.label ?: bv.fieldKey.substringAfterLast('.')
+                sb.append("  - ").append(label).append(": ").append(bv.valueEnc).append("\n")
+            }
+        }
+
+        val docRecords = container.docRecordDao.getDocsForProfileOnce(profile.id)
+        if (docRecords.isNotEmpty()) {
+            sb.append("\n=== SUB-PERSONAL & DOCUMENT RECORDS (Tier.SUB) ===\n")
+            for (doc in docRecords) {
+                sb.append("• Document [").append(doc.docType).append("] ").append(doc.title).append(" (Tier: ").append(doc.tier.name).append("):\n")
+                val docVals = container.fieldValueDao.getDocValuesOnce(profile.id, doc.id)
+                for (dv in docVals) {
+                    val label = defMap[dv.fieldKey]?.label ?: dv.fieldKey.substringAfterLast('.')
+                    sb.append("  - ").append(label).append(": ").append(dv.valueEnc).append("\n")
+                }
+            }
+        }
+
+        sb.append("=== END OF PROFILE DATA CONTEXT ===\n\n")
+        sb.toString()
+    } catch (e: Exception) {
+        ""
+    }
+}
+
