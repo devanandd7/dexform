@@ -1,14 +1,22 @@
 package com.dexform.app.ui.gallery
 
 import android.Manifest
+import android.app.Activity
+import android.app.RecoverableSecurityException
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.provider.MediaStore
 import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.TextButton
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -83,7 +91,7 @@ import com.dexform.app.util.formatDuration
 import com.dexform.app.util.formatFileSize
 
 enum class FilterType {
-    ALL, PHOTOS, VIDEOS, UNDER_50KB, UNDER_200KB, OVER_1MB
+    ALL, UNDER_50KB, UNDER_200KB, OVER_1MB
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -100,24 +108,71 @@ fun PhotosScreen(
 
     var activeFilter by remember { mutableStateOf(FilterType.ALL) }
     var selectedItemIds by remember { mutableStateOf(setOf<Long>()) }
+    var viewingImageIndex by remember { mutableStateOf<Int?>(null) }
+    var showDeleteConfirmDialog by remember { mutableStateOf(false) }
+    var itemsToDelete by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
     val isSelectionMode = selectedItemIds.isNotEmpty()
 
-    // Permissions State
+    // MediaStore Deletion Launcher
+    val deleteRequestLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            mediaRepo.refresh()
+            selectedItemIds = emptySet()
+            if (viewingImageIndex != null) {
+                viewingImageIndex = null
+            }
+            Toast.makeText(context, "Deleted successfully", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun executeDelete(items: List<MediaItem>) {
+        if (items.isEmpty()) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                val uris = items.map { it.uri }
+                val pi = MediaStore.createDeleteRequest(context.contentResolver, uris)
+                val request = IntentSenderRequest.Builder(pi.intentSender).build()
+                deleteRequestLauncher.launch(request)
+            } catch (e: Exception) {
+                e.printStackTrace()
+                Toast.makeText(context, "Error initiating deletion: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        } else {
+            var count = 0
+            items.forEach { item ->
+                try {
+                    count += context.contentResolver.delete(item.uri, null, null)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+            if (count > 0) {
+                mediaRepo.refresh()
+                selectedItemIds = emptySet()
+                if (viewingImageIndex != null) {
+                    viewingImageIndex = null
+                }
+                Toast.makeText(context, "Deleted $count photo(s)", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    // Permissions State (Images only)
     var isGranted by remember { mutableStateOf(false) }
     var isPartialGranted by remember { mutableStateOf(false) }
 
     fun checkPermissions() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             val fullImages = ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_IMAGES) == PackageManager.PERMISSION_GRANTED
-            val fullVideo = ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_VIDEO) == PackageManager.PERMISSION_GRANTED
             val selected = ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) == PackageManager.PERMISSION_GRANTED
 
-            isGranted = fullImages && fullVideo
+            isGranted = fullImages
             isPartialGranted = !isGranted && selected
         } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             val fullImages = ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_IMAGES) == PackageManager.PERMISSION_GRANTED
-            val fullVideo = ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_VIDEO) == PackageManager.PERMISSION_GRANTED
-            isGranted = fullImages && fullVideo
+            isGranted = fullImages
             isPartialGranted = false
         } else {
             isGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
@@ -142,12 +197,10 @@ fun PhotosScreen(
         when {
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE -> arrayOf(
                 Manifest.permission.READ_MEDIA_IMAGES,
-                Manifest.permission.READ_MEDIA_VIDEO,
                 Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
             )
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> arrayOf(
-                Manifest.permission.READ_MEDIA_IMAGES,
-                Manifest.permission.READ_MEDIA_VIDEO
+                Manifest.permission.READ_MEDIA_IMAGES
             )
             else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
         }
@@ -156,8 +209,6 @@ fun PhotosScreen(
     val filteredList = remember(mediaItems, activeFilter) {
         when (activeFilter) {
             FilterType.ALL -> mediaItems
-            FilterType.PHOTOS -> mediaItems.filter { !it.isVideo }
-            FilterType.VIDEOS -> mediaItems.filter { it.isVideo }
             FilterType.UNDER_50KB -> mediaItems.filter { it.sizeBytes < 50 * 1024 }
             FilterType.UNDER_200KB -> mediaItems.filter { it.sizeBytes < 200 * 1024 }
             FilterType.OVER_1MB -> mediaItems.filter { it.sizeBytes > 1024 * 1024 }
@@ -182,6 +233,19 @@ fun PhotosScreen(
                 },
                 actions = {
                     if (isSelectionMode) {
+                        IconButton(onClick = {
+                            val selectedItems = mediaItems.filter { it.id in selectedItemIds }
+                            if (selectedItems.isNotEmpty()) {
+                                itemsToDelete = selectedItems
+                                showDeleteConfirmDialog = true
+                            }
+                        }) {
+                            Icon(
+                                Icons.Outlined.Delete,
+                                contentDescription = "Delete Selected",
+                                tint = MaterialTheme.colorScheme.error
+                            )
+                        }
                         IconButton(onClick = {
                             val selectedUris = mediaItems.filter { it.id in selectedItemIds }.map { it.uri }
                             val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
@@ -297,20 +361,6 @@ fun PhotosScreen(
                     }
                     item {
                         FilterChip(
-                            selected = activeFilter == FilterType.PHOTOS,
-                            onClick = { activeFilter = FilterType.PHOTOS },
-                            label = { Text(stringResource(R.string.filter_photos)) }
-                        )
-                    }
-                    item {
-                        FilterChip(
-                            selected = activeFilter == FilterType.VIDEOS,
-                            onClick = { activeFilter = FilterType.VIDEOS },
-                            label = { Text(stringResource(R.string.filter_videos)) }
-                        )
-                    }
-                    item {
-                        FilterChip(
                             selected = activeFilter == FilterType.UNDER_50KB,
                             onClick = { activeFilter = FilterType.UNDER_50KB },
                             label = { Text(stringResource(R.string.filter_under_50kb)) }
@@ -374,6 +424,8 @@ fun PhotosScreen(
                                                 } else {
                                                     selectedItemIds + item.id
                                                 }
+                                            } else {
+                                                viewingImageIndex = filteredList.indexOf(item)
                                             }
                                         },
                                         onLongClick = {
@@ -430,7 +482,7 @@ fun PhotosScreen(
                                     )
                                 }
 
-                                // Format badge / Video duration (Bottom-Right)
+                                // Format badge (Bottom-Right)
                                 Box(
                                     modifier = Modifier
                                         .align(Alignment.BottomEnd)
@@ -438,35 +490,17 @@ fun PhotosScreen(
                                         .background(Color.Black.copy(alpha = 0.6f), shape = RoundedCornerShape(4.dp))
                                         .padding(horizontal = 4.dp, vertical = 2.dp)
                                 ) {
-                                    if (item.isVideo) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Icon(
-                                                Icons.Outlined.PlayArrow,
-                                                contentDescription = null,
-                                                tint = Color.White,
-                                                modifier = Modifier.size(10.dp)
-                                            )
-                                            Spacer(modifier = Modifier.width(2.dp))
-                                            Text(
-                                                text = formatDuration(item.durationMs),
-                                                color = Color.White,
-                                                fontSize = 10.sp,
-                                                fontWeight = FontWeight.Medium
-                                            )
-                                        }
-                                    } else {
-                                        val fmtText = when {
-                                            item.mimeType.contains("png", true) -> "PNG"
-                                            item.mimeType.contains("webp", true) -> "WEBP"
-                                            else -> "JPG"
-                                        }
-                                        Text(
-                                            text = fmtText,
-                                            color = Color.White,
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.Medium
-                                        )
+                                    val fmtText = when {
+                                        item.mimeType.contains("png", true) -> "PNG"
+                                        item.mimeType.contains("webp", true) -> "WEBP"
+                                        else -> "JPG"
                                     }
+                                    Text(
+                                        text = fmtText,
+                                        color = Color.White,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
                                 }
                             }
                         }
@@ -475,4 +509,62 @@ fun PhotosScreen(
             }
         }
     }
+
+    viewingImageIndex?.let { index ->
+        ImageViewer(
+            items = filteredList,
+            initialIndex = index,
+            onDismiss = { viewingImageIndex = null },
+            onDelete = { item ->
+                itemsToDelete = listOf(item)
+                showDeleteConfirmDialog = true
+            }
+        )
+    }
+
+    if (showDeleteConfirmDialog && itemsToDelete.isNotEmpty()) {
+        AlertDialog(
+            onDismissRequest = {
+                showDeleteConfirmDialog = false
+                itemsToDelete = emptyList()
+            },
+            title = {
+                Text(
+                    text = if (itemsToDelete.size == 1) "Delete Photo" else "Delete ${itemsToDelete.size} Photos"
+                )
+            },
+            text = {
+                Text(
+                    text = if (itemsToDelete.size == 1)
+                        "Are you sure you want to delete this photo permanently?"
+                    else
+                        "Are you sure you want to delete ${itemsToDelete.size} selected photos permanently?"
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val toDelete = itemsToDelete
+                        showDeleteConfirmDialog = false
+                        itemsToDelete = emptyList()
+                        executeDelete(toDelete)
+                    },
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showDeleteConfirmDialog = false
+                        itemsToDelete = emptyList()
+                    }
+                ) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
 }
+

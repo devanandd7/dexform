@@ -42,9 +42,6 @@ class MediaRepository(private val context: Context) {
             context.contentResolver.registerContentObserver(
                 MediaStore.Images.Media.EXTERNAL_CONTENT_URI, true, observer
             )
-            context.contentResolver.registerContentObserver(
-                MediaStore.Video.Media.EXTERNAL_CONTENT_URI, true, observer
-            )
         } catch (_: Exception) {}
         refresh()
     }
@@ -136,73 +133,6 @@ class MediaRepository(private val context: Context) {
                             dateTakenMs = dateMs,
                             isVideo = false,
                             durationMs = 0L,
-                            bucketId = bucketId,
-                            bucketName = bucketName,
-                            relativePath = relPath
-                        )
-                    )
-                }
-            }
-        } catch (_: Exception) {}
-
-        // Video Query
-        val videoProjection = projection.toMutableList().apply {
-            add(MediaStore.Video.VideoColumns.DURATION)
-        }.toTypedArray()
-
-        try {
-            context.contentResolver.query(
-                MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
-                videoProjection,
-                null,
-                null,
-                "${MediaStore.MediaColumns.DATE_ADDED} DESC"
-            )?.use { cursor ->
-                val idCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
-                val nameCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
-                val mimeCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.MIME_TYPE)
-                val sizeCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.SIZE)
-                val widthCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.WIDTH)
-                val heightCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.HEIGHT)
-                val dateTakenCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_TAKEN)
-                val dateAddedCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_ADDED)
-                val bucketIdCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.BUCKET_ID)
-                val bucketNameCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.BUCKET_DISPLAY_NAME)
-                val durationCol = cursor.getColumnIndex(MediaStore.Video.VideoColumns.DURATION)
-                val relPathCol = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    cursor.getColumnIndex(MediaStore.MediaColumns.RELATIVE_PATH)
-                } else -1
-
-                while (cursor.moveToNext()) {
-                    val id = cursor.getLong(idCol)
-                    val size = cursor.getLong(sizeCol)
-                    val name = cursor.getString(nameCol) ?: continue
-                    if (size <= 0) continue
-
-                    val uri = ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id)
-                    val mime = cursor.getString(mimeCol) ?: "video/mp4"
-                    val width = cursor.getInt(widthCol)
-                    val height = cursor.getInt(heightCol)
-                    val dateTaken = cursor.getLong(dateTakenCol)
-                    val dateAdded = cursor.getLong(dateAddedCol)
-                    val dateMs = if (dateTaken > 0) dateTaken else dateAdded * 1000L
-                    val bucketId = cursor.getLong(bucketIdCol)
-                    val bucketName = cursor.getString(bucketNameCol) ?: "Internal"
-                    val duration = if (durationCol >= 0) cursor.getLong(durationCol) else 0L
-                    val relPath = if (relPathCol >= 0) cursor.getString(relPathCol) else null
-
-                    results.add(
-                        MediaItem(
-                            id = id,
-                            uri = uri,
-                            displayName = name,
-                            mimeType = mime,
-                            sizeBytes = size,
-                            width = width,
-                            height = height,
-                            dateTakenMs = dateMs,
-                            isVideo = true,
-                            durationMs = duration,
                             bucketId = bucketId,
                             bucketName = bucketName,
                             relativePath = relPath

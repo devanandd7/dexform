@@ -35,7 +35,10 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -51,6 +54,18 @@ import com.dexform.app.App
 import com.dexform.app.data.media.MediaItem
 import com.dexform.app.util.formatFileSize
 
+import android.app.Activity
+import android.os.Build
+import android.provider.MediaStore
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.IntentSenderRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.collectAsState
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AlbumDetailScreen(
@@ -62,8 +77,49 @@ fun AlbumDetailScreen(
     val app = context.applicationContext as App
     val mediaRepo = app.container.mediaRepository
 
-    val albumItems = remember(bucketId) {
+    val mediaItems by mediaRepo.mediaItems.collectAsState()
+    val albumItems = remember(mediaItems, bucketId) {
         mediaRepo.getItemsForAlbum(bucketId)
+    }
+
+    var viewingImageIndex by remember { mutableStateOf<Int?>(null) }
+    var showDeleteConfirmDialog by remember { mutableStateOf(false) }
+    var itemToDelete by remember { mutableStateOf<MediaItem?>(null) }
+
+    val deleteRequestLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            mediaRepo.refresh()
+            viewingImageIndex = null
+            itemToDelete = null
+            Toast.makeText(context, "Deleted successfully", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun executeDelete(item: MediaItem) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                val pi = MediaStore.createDeleteRequest(context.contentResolver, listOf(item.uri))
+                val request = IntentSenderRequest.Builder(pi.intentSender).build()
+                deleteRequestLauncher.launch(request)
+            } catch (e: Exception) {
+                e.printStackTrace()
+                Toast.makeText(context, "Error initiating deletion: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        } else {
+            try {
+                val count = context.contentResolver.delete(item.uri, null, null)
+                if (count > 0) {
+                    mediaRepo.refresh()
+                    viewingImageIndex = null
+                    itemToDelete = null
+                    Toast.makeText(context, "Deleted photo", Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
     }
 
     Scaffold(
@@ -114,12 +170,16 @@ fun AlbumDetailScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable {
-                                val intent = Intent(Intent.ACTION_SEND).apply {
-                                    type = item.mimeType
-                                    putExtra(Intent.EXTRA_STREAM, item.uri)
-                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                if (item.mimeType.contains("pdf", ignoreCase = true)) {
+                                    val intent = Intent(Intent.ACTION_SEND).apply {
+                                        type = item.mimeType
+                                        putExtra(Intent.EXTRA_STREAM, item.uri)
+                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    }
+                                    context.startActivity(Intent.createChooser(intent, "Share File"))
+                                } else {
+                                    viewingImageIndex = albumItems.indexOf(item)
                                 }
-                                context.startActivity(Intent.createChooser(intent, "Share File"))
                             },
                         shape = RoundedCornerShape(8.dp),
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
@@ -202,5 +262,57 @@ fun AlbumDetailScreen(
                 }
             }
         }
+    }
+
+    viewingImageIndex?.let { index ->
+        ImageViewer(
+            items = albumItems,
+            initialIndex = index,
+            onDismiss = { viewingImageIndex = null },
+            onDelete = { item ->
+                itemToDelete = item
+                showDeleteConfirmDialog = true
+            }
+        )
+    }
+
+    if (showDeleteConfirmDialog && itemToDelete != null) {
+        AlertDialog(
+            onDismissRequest = {
+                showDeleteConfirmDialog = false
+                itemToDelete = null
+            },
+            title = {
+                Text(text = "Delete Photo")
+            },
+            text = {
+                Text(text = "Are you sure you want to delete this photo permanently?")
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val toDelete = itemToDelete
+                        showDeleteConfirmDialog = false
+                        itemToDelete = null
+                        if (toDelete != null) {
+                            executeDelete(toDelete)
+                        }
+                    },
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showDeleteConfirmDialog = false
+                        itemToDelete = null
+                    }
+                ) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 }
